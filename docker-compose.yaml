@@ -5,18 +5,23 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile.distroless
-
     ports:
-      - 8000:8000
-
+      - "8000:8000"
     environment:
       STORAGE_BACKEND: memory
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
 
   frontend:
     build:
-      context:  ./frontend
+      context: ./frontend
       dockerfile: Dockerfile.distroless
-
     ports:
-      - 3000:8080
-
+      - "3000:8080"
+    depends_on:
+      backend:
+        condition: service_healthy
