@@ -1,3 +1,16 @@
+# FAT Pack
+
+
+
+# alpine
 docker build -f Dockerfile.multistage -t counter-backend:alpine .
 
 docker run --rm -p 8000:8000 -e STORAGE_BACKEND=memory counter-backend:alpine
+docker run --rm -p 8000:8000 -e STORAGE_BACKEND=memory -it counter-backend:alpine /bin/sh/app
+
+# distroless
+docker build -f Dockerfile.distroless -t counter-backend:slim .
+docker run --rm -p 8000:8000 -e STORAGE_BACKEND=memory counter-backend:slim
+
+# swagger
+http://localhost:8000/docs
