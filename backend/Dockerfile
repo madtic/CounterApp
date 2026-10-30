@@ -1,9 +1,9 @@
-FROM ubuntu:latest
+
 LABEL authors="madtic"
 
 ENTRYPOINT ["top", "-b"]
 
-FROM python:3.13
+FROM python:3.13 AS builder
 
 COPY --from=ghcr.io/astral-sh/uv:0.11.21 /uv /uvx /bin/
 
