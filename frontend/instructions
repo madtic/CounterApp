@@ -1,0 +1,4 @@
+docker build -f Dockerfile -t counter-frontend:latest .
+docker build -f Dockerfile.alpine -t counter-frontend:alpine .
+
+docker run
