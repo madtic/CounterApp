@@ -13,8 +13,11 @@ dependencies = [
 [dependency-groups]
 dev = [
     "httpx>=0.28.1",
+    "pysonar>=1.10.0.5888",
     "pytest>=8.4.0",
+    "pytest-cov>=7.0.0",
     "ruff>=0.12.0",
+    "ty>=0.0.98",
 ]
 
 [tool.uv]
@@ -27,9 +30,21 @@ testpaths = ["tests"]
 pythonpath = ["."]
 addopts = "-q"
 
+[tool.coverage.run]
+source = ["app"]
+
+[tool.coverage.report]
+show_missing = true
+
 [tool.ruff]
 target-version = "py313"
 line-length = 100
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "ASYNC"]
+
+[tool.ty.environment]
+python-version = "3.13"
+
+[tool.ty.src]
+include = ["app", "tests"]
