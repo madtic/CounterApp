@@ -1,93 +1,142 @@
-# CounterApp
-
-
-
-## Getting started
-
-To make it easy for you to get started with GitLab, here's a list of recommended next steps.
-
-Already a pro? Just edit this README.md and make it your own. Want to make it easy? [Use the template at the bottom](#editing-this-readme)!
-
-## Add your files
-
-* [Create](https://docs.gitlab.com/user/project/repository/web_editor/#create-a-file) or [upload](https://docs.gitlab.com/user/project/repository/web_editor/#upload-a-file) files
-* [Add files using the command line](https://docs.gitlab.com/topics/git/add_files/#add-files-to-a-git-repository) or push an existing Git repository with the following command:
+# Counter Playground
 
 ```
-cd existing_repo
-git remote add origin https://gitlab.com/madtic1/counterapp.git
-git branch -M main
-git push -uf origin main
+┌─────────────────────┐        HTTP /api/*        ┌─────────────────────┐
+│  React frontend     │ ────────────────────────▶ │  FastAPI backend    │
+│  Vite build         │                           │  uv + uvicorn       │
+└─────────────────────┘                           └──────────┬──────────┘
+                                                             │ CounterStorage
+                                                   ┌─────────┴─────────┐
+                                                   ▼                   ▼
+                                              in-memory           PostgreSQL
 ```
 
-## Integrate with your tools
+## What is included
 
-* [Set up project integrations](https://gitlab.com/madtic1/counterapp/-/settings/integrations)
+- **Backend**: uv + FastAPI, async API, storage behind a `Protocol`.
+  - in-memory storage (default)
+  - PostgreSQL storage
+- **Frontend**: React + Vite, current counter value and increment/decrement buttons.
 
-## Collaborate with your team
+The decrement endpoint is intentionally **not implemented**. It returns `501 Not
+Implemented` and is the first exercise.
 
-* [Invite team members and collaborators](https://docs.gitlab.com/user/project/members/)
-* [Create a new merge request](https://docs.gitlab.com/user/project/merge_requests/creating_merge_requests/)
-* [Automatically close issues from merge requests](https://docs.gitlab.com/user/project/issues/managing_issues/#closing-issues-automatically)
-* [Enable merge request approvals](https://docs.gitlab.com/user/project/merge_requests/approvals/)
-* [Set auto-merge](https://docs.gitlab.com/user/project/merge_requests/auto_merge/)
+---
 
-## Test and Deploy
+## Project structure
 
-Use the built-in continuous integration in GitLab.
+```text
+.
+├── backend/
+│   ├── app/
+│   │   ├── api/routes.py           # HTTP endpoints
+│   │   ├── config.py               # environment configuration
+│   │   ├── main.py                 # app factory + lifespan
+│   │   ├── schemas.py
+│   │   └── storage/
+│   │       ├── protocol.py         # CounterStorage protocol
+│   │       ├── memory.py
+│   │       ├── postgres.py
+│   │       └── __init__.py         # storage factory
+│   ├── tests/
+│   ├── pyproject.toml
+│   ├── uv.lock
+├── frontend/
+│   ├── src/
+│   ├── package.json
+│   ├── package-lock.json
+│   └── nginx.conf
+```
 
-* [Get started with GitLab CI/CD](https://docs.gitlab.com/ci/quick_start/)
-* [Analyze your code for known vulnerabilities with Static Application Security Testing (SAST)](https://docs.gitlab.com/user/application_security/sast/)
-* [Deploy to Kubernetes, Amazon EC2, or Amazon ECS using Auto Deploy](https://docs.gitlab.com/topics/autodevops/requirements/)
-* [Use pull-based deployments for improved Kubernetes management](https://docs.gitlab.com/user/clusters/agent/)
-* [Set up protected environments](https://docs.gitlab.com/ci/environments/protected_environments/)
+---
 
-***
+## API
 
-# Editing this README
+| Method | Path | Result |
+| --- | --- | --- |
+| `GET` | `/api/counter` | `200 {"value": 0}` |
+| `POST` | `/api/counter/increment` | increments by one, returns new value |
+| `POST` | `/api/counter/decrement` | `501 Not Implemented` |
+| `GET` | `/health` | `200 {"status": "ok", "storage": "postgres"}` |
+| `GET` | `/docs` | Swagger UI |
 
-When you're ready to make this README your own, just edit this file and use the handy template below (or feel free to structure it however you want - this is just a starting point!). Thanks to [makeareadme.com](https://www.makeareadme.com/) for this template.
+Quick test:
 
-## Suggestions for a good README
+```bash
+curl -s http://localhost:8000/api/counter
+curl -s -X POST http://localhost:8000/api/counter/increment
+```
 
-Every project is different, so consider which of these sections apply to yours. The sections used in the template are suggestions for most open source projects. Also keep in mind that while a README can be too long and detailed, too long is better than too short. If you think your README is too long, consider utilizing another form of documentation rather than cutting out information.
+---
 
-## Name
-Choose a self-explaining name for your project.
+## Storage backends
 
-## Description
-Let people know what your project can do specifically. Provide context and add a link to any reference visitors might be unfamiliar with. A list of Features or a Background subsection can also be added here. If there are alternatives to your project, this is a good place to list differentiating factors.
+The API only knows the `CounterStorage` protocol from
+[`backend/app/storage/protocol.py`](backend/app/storage/protocol.py):
 
-## Badges
-On some READMEs, you may see small images that convey metadata, such as whether or not all the tests are passing for the project. You can use Shields to add some to your README. Many services also have instructions for adding a badge.
+```python
+class CounterStorage(Protocol):
+    async def initialize(self) -> None: ...
+    async def close(self) -> None: ...
+    async def get_value(self) -> int: ...
+    async def increment(self) -> int: ...
+```
 
-## Visuals
-Depending on what you are making, it can be a good idea to include screenshots or even a video (you'll frequently see GIFs rather than actual videos). Tools like ttygif can help, but check out Asciinema for a more sophisticated method.
+The implementation is selected in `create_storage()` via `STORAGE_BACKEND`:
 
-## Installation
-Within a particular ecosystem, there may be a common way of installing things, such as using Yarn, NuGet, or Homebrew. However, consider the possibility that whoever is reading your README is a novice and would like more guidance. Listing specific steps helps remove ambiguity and gets people to using your project as quickly as possible. If it only runs in a specific context like a particular programming language version or operating system or has dependencies that have to be installed manually, also add a Requirements subsection.
+```bash
+# volatile, in-process counter
+STORAGE_BACKEND=memory docker compose up --build
 
-## Usage
-Use examples liberally, and show the expected output if you can. It's helpful to have inline the smallest example of usage that you can demonstrate, while providing links to more sophisticated examples if they are too long to reasonably include in the README.
+# persistent counter in the bundled PostgreSQL container (default)
+STORAGE_BACKEND=postgres docker compose up --build
+```
 
-## Support
-Tell people where they can go to for help. It can be any combination of an issue tracker, a chat room, an email address, etc.
+`PostgresCounterStorage` creates the `counter` table on startup and uses an atomic
+upsert (`INSERT ... ON CONFLICT ... RETURNING`) for increments. It also retries the
+first connection, because Compose may start the API before PostgreSQL is ready.
 
-## Roadmap
-If you have ideas for releases in the future, it is a good idea to list them in the README.
+---
 
-## Contributing
-State if you are open to contributions and what your requirements are for accepting them.
+## Local development
 
-For people who want to make changes to your project, it's helpful to have some documentation on how to get started. Perhaps there is a script that they should run or some environment variables that they need to set. Make these steps explicit. These instructions could also be useful to your future self.
+### Backend
 
-You can also document commands to lint the code or run tests. These steps help to ensure high code quality and reduce the likelihood that the changes inadvertently break something. Having instructions for running tests is especially helpful if it requires external setup, such as starting a Selenium server for testing in a browser.
+```bash
+cd backend
+uv sync
+uv run uvicorn app.main:app --reload
+```
 
-## Authors and acknowledgment
-Show your appreciation to those who have contributed to the project.
+If you want PostgreSQL locally, start only the database and export the URL:
 
-## License
-For open source projects, say how it is licensed.
+```bash
+docker compose up -d db
+export STORAGE_BACKEND=postgres
+export DATABASE_URL=postgresql://counter:counter@localhost:5432/counter
+uv run uvicorn app.main:app --reload
+```
 
-## Project status
-If you have run out of energy or time for your project, put a note at the top of the README saying that development has slowed down or stopped completely. Someone may choose to fork your project or volunteer to step in as a maintainer or owner, allowing your project to keep going. You can also make an explicit request for maintainers.
+Run the checks:
+
+```bash
+uv run ruff check .
+uv run pytest
+```
+
+### Frontend
+
+```bash
+cd frontend
+npm ci
+npm run dev
+```
+
+Open http://localhost:5173. The Vite dev server proxies `/api` to
+`http://localhost:8000`, so no CORS setup is needed for local development.
+
+If the API runs elsewhere:
+
+```bash
+BACKEND_PROXY_TARGET=http://192.168.1.20:8000 npm run dev
+```
