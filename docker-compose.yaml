@@ -1,6 +1,23 @@
 name: counter-demo
 
 services:
+
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: counter
+      POSTGRES_USER: counter
+      POSTGRES_PASSWORD: counter
+    ports:
+      - 5432:5432
+    volumes:
+      - counter-db-data:/var/lib/postresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U counter -d counter"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
   backend:
     build:
       context: ./backend
@@ -8,7 +25,7 @@ services:
     ports:
       - "8000:8000"
     environment:
-      STORAGE_BACKEND: memory
+      STORAGE_BACKEND: postgres
     healthcheck:
       test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
       interval: 10s
