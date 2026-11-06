@@ -78,7 +78,7 @@ export default function App() {
             {error}
           </p>
         ) : (
-          <p className="message">The decrement endpoint is a TODO for the lecture.</p>
+          <p className="message">The counter is stored by the FastAPI backend.</p>
         )}
 
         <footer className="card__footer">
