@@ -1,0 +1,211 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Wähle die Aktion (deploy oder undeploy)'
+        required: true
+        default: 'deploy'
+        type: choice
+        options:
+          - deploy
+          - undeploy
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  backend-test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./backend
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+          cache-dependency-glob: "backend/uv.lock"
+          
+      - name: Install Python 3.13
+        run: uv python install 3.13
+        
+      - name: Install dependencies
+        run: uv sync --frozen
+        
+      - name: Run Ruff
+        run: uv run ruff check .
+        
+      - name: Run Ty
+        run: uv run ty check
+        
+      - name: Run Pytest
+        run: uv run pytest --cov=app --cov-report=xml:coverage.xml --junitxml=pytest-report.xml --junit-prefix=backend
+        
+      - name: Upload Coverage Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-coverage
+          path: |
+            backend/coverage.xml
+            backend/pytest-report.xml
+          retention-days: 7
+
+  frontend-test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./frontend
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+          
+      - name: Install dependencies
+        run: npm ci
+        
+      - name: Build frontend
+        run: npm run build
+
+  sonarqube:
+    needs: backend-test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          
+      - name: Download backend coverage
+        uses: actions/download-artifact@v4
+        with:
+          name: backend-coverage
+          path: backend/
+          
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v4
+        
+      - name: Install Python
+        run: uv python install 3.13
+        
+      - name: Run SonarQube
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL || 'http://localhost:9000' }}
+          SONAR_ORGANIZATION: ${{ secrets.SONAR_ORGANIZATION }}
+        run: |
+          sed -i 's#<source>.*</source>#<source>backend/app</source>#' backend/coverage.xml
+          if [ -n "$SONAR_ORGANIZATION" ]; then
+            uv run --project backend pysonar -Dsonar.host.url="${SONAR_HOST_URL}" -Dsonar.organization="${SONAR_ORGANIZATION}"
+          else
+            uv run --project backend pysonar -Dsonar.host.url="${SONAR_HOST_URL}"
+          fi
+        if: env.SONAR_TOKEN != ''
+
+  docker-build:
+    needs: [backend-test, frontend-test]
+    runs-on: ubuntu-latest
+    if: github.event_name != 'workflow_dispatch'
+    strategy:
+      matrix:
+        service: [backend, frontend]
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        
+      - name: Log in to GitHub Container Registry
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+          
+      - name: Extract Docker Metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ matrix.service }}
+          tags: |
+            type=sha,format=short
+            type=ref,event=branch
+            type=raw,value=latest,enable=${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+            
+      - name: Build and Push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./${{ matrix.service }}
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+  sast:
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      actions: read
+      contents: read
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: python, javascript
+          
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+
+  secret-detection:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          
+      - name: TruffleHog Secret Scanning
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          base: ${{ github.event.repository.default_branch }}
+          head: HEAD
+          extra_args: --only-verified
+
+  deployment:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    environment: counter-app-local
+    env:
+      BACKEND_PORT: "8000"
+      FRONTEND_PORT: "3000"
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        
+      - name: Execute Script
+        run: |
+          if [ "${{ github.event.inputs.action }}" = "deploy" ]; then
+            bash deploy/deploy.sh
+          else
+            bash deploy/undeploy.sh
+          fi
