@@ -26,3 +26,8 @@ class InMemoryCounterStorage:
         async with self._lock:
             self._value += 1
             return self._value
+
+    async def decrement(self) -> int:
+        async with self._lock:
+            self._value -= 1
+            return self._value

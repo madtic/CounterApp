@@ -1,3 +1,5 @@
+from collections.abc import Iterator
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -6,7 +8,7 @@ from app.main import create_app
 
 
 @pytest.fixture
-def client() -> TestClient:
+def client() -> Iterator[TestClient]:
     app = create_app(Settings(storage_backend="memory"))
     with TestClient(app) as test_client:
         yield test_client
@@ -32,8 +34,8 @@ def test_increment_returns_new_value(client: TestClient) -> None:
     assert client.get("/api/counter").json() == {"value": 2}
 
 
-def test_decrement_is_not_implemented_yet(client: TestClient) -> None:
-    response = client.post("/api/counter/decrement")
-
-    assert response.status_code == 501
-    assert response.json()["detail"] == "Decrement is not implemented yet."
+def test_decrement_returns_new_value(client: TestClient) -> None:
+    assert client.post("/api/counter/increment").json() == {"value": 1}
+    assert client.post("/api/counter/decrement").json() == {"value": 0}
+    assert client.post("/api/counter/decrement").json() == {"value": -1}
+    assert client.get("/api/counter").json() == {"value": -1}

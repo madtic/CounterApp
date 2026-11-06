@@ -1,5 +1,16 @@
+# syntax=docker/dockerfile:1
+
+# =============================================================================
+# BASIC / NAIVE IMAGE (for comparison only)
+#
+# * one single stage
+# * full Node.js image including compilers and build tools
+# * dev dependencies, sources and the build step all stay in the final image
+# * serves the build with `vite preview` (fine for a demo, not for real prod)
+#
+# Build:  docker build -t counter-frontend:basic .
+# =============================================================================
 FROM node:22
-LABEL authors="madtic"
 
 WORKDIR /app
 

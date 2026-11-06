@@ -24,3 +24,7 @@ class CounterStorage(Protocol):
     async def increment(self) -> int:
         """Increase the counter by one and return the new value."""
         ...
+
+    async def decrement(self) -> int:
+        """Decrease the counter by one and return the new value."""
+        ...

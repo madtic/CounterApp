@@ -1,3 +1,15 @@
+# syntax=docker/dockerfile:1
+
+# =============================================================================
+# MULTI-STAGE, DISTROLESS
+#
+# * Node.js only exists in the builder stage
+# * runtime is Google's distroless static image (no shell, no package manager)
+# * static-web-server is a single, statically linked binary that serves the
+#   Vite build
+#
+# Build:  docker build -f Dockerfile.distroless -t counter-frontend:distroless .
+# =============================================================================
 FROM node:22-alpine AS build
 
 WORKDIR /app
