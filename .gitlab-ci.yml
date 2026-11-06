@@ -7,6 +7,7 @@
 # See https://docs.gitlab.com/ci/variables/#cicd-variable-precedence
 stages:
 - test
+- quality
 - build
 - secret-detection
 - deploy
@@ -52,6 +53,48 @@ frontend-test:
   script:
     - npm ci
     - npm run build
+
+sonarqube:
+  stage: quality
+  tags:
+    - shell
+  variables:
+    GIT_DEPTH: "0"
+  dependencies:
+    - backend-test
+  script:
+    - |
+      cd "${CI_PROJECT_DIR}"
+
+      if ! command -v uv >/dev/null 2>&1; then
+        echo "ERROR: uv is not installed on the shell runner." >&2
+        echo "Install uv: https://docs.astral.sh/uv/getting-started/installation/" >&2
+        exit 1
+      fi
+
+      if [ ! -f backend/coverage.xml ]; then
+        echo "ERROR: backend/coverage.xml was not downloaded from the test job." >&2
+        exit 1
+      fi
+
+      export SONAR_HOST_URL="${SONAR_HOST_URL:-http://localhost:9000}"
+
+      # The coverage report contains the absolute path of backend/app from the
+      # test job. Normalize it so the scanner can resolve the files regardless
+      # of the runner's build directory.
+      sed -i 's#<source>.*</source>#<source>backend/app</source>#' backend/coverage.xml
+
+      if [ -n "${SONAR_ORGANIZATION:-}" ]; then
+        uv run --project backend pysonar \
+          -Dsonar.host.url="${SONAR_HOST_URL}" \
+          -Dsonar.organization="${SONAR_ORGANIZATION}"
+      else
+        uv run --project backend pysonar -Dsonar.host.url="${SONAR_HOST_URL}"
+      fi
+  rules:
+    - if: "$SONAR_TOKEN"
+      when: on_success
+    - when: never
 
 docker-build:
   stage: build
