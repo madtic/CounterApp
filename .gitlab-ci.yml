@@ -9,6 +9,7 @@ stages:
 - test
 - build
 - secret-detection
+- deploy
 
 variables:
   UV_CACHE_DIR: "$CI_PROJECT_DIR/.cache/uv"
@@ -111,3 +112,33 @@ include:
   - template: Security/Secret-Detection.gitlab-ci.yml
 secret_detection:
   stage: secret-detection
+
+
+.deploy-job:
+  stage: deploy
+  tags:
+    - shell
+  interruptible: false
+  allow_failure: true
+  resource_group: counter-app-local
+  variables:
+    BACKEND_PORT: "8000"
+    FRONTEND_PORT: "3000"
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      when: never
+    - if: "$CI_COMMIT_BRANCH"
+      when: manual
+    - if: "$CI_COMMIT_TAG"
+      when: manual
+    - when: never
+
+deploy:
+  extends: .deploy-job
+  script:
+    - bash deploy/deploy.sh
+
+undeploy:
+  extends: .deploy-job
+  script:
+    - bash deploy/undeploy.sh
