@@ -37,3 +37,7 @@ async def get_counter(storage: StorageDep) -> CounterResponse:
 @router.post("/api/counter/increment", response_model=CounterResponse, tags=["counter"])
 async def increment_counter(storage: StorageDep) -> CounterResponse:
     return CounterResponse(value=await storage.increment())
+
+@router.post("/api/counter/decrement", response_model=CounterResponse, tags=["counter"])
+async def decrement_counter(storage: StorageDep) -> CounterResponse:
+    return CounterResponse(value=await storage.decrement())
