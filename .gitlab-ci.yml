@@ -7,6 +7,7 @@
 # See https://docs.gitlab.com/ci/variables/#cicd-variable-precedence
 stages:
 - test
+- -build
 - secret-detection
 sast:
   stage: test
@@ -15,3 +16,19 @@ include:
 - template: Security/Secret-Detection.gitlab-ci.yml
 secret_detection:
   stage: secret-detection
+
+workflow:
+  variables:
+    UV_CACHE_DIR: "$CI_PROJECT_DIR/.cache/uv"
+    npm_config_cache: "$CI_PROJECT_DIR/.npm"
+
+backend-test:
+  stage: test
+  image: ghcr.io/astral-sh/uv:python3.13-bookworm-slim
+  cache:
+    key:
+      files:
+        - backend/uv.lock
+      path:
+        - .cache/uv
+    before_scripts:
