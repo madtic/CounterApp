@@ -52,7 +52,57 @@ frontend-test:
     - npm ci
     - npm run build
 
+docker-build:
+  stage: build
+  image: docker:27
+  services:
+    - name: docker:27-dind
+      alias: docker
+  variables:
+    DOCKER_HOST: tcp://docker:2376
+    DOCKER_TLS_CERTDIR: "/certs"
+    DOCKER_TLS_VERIFY: "1"
+    DOCKER_CERT_PATH: "/certs/client"
+  parallel:
+    matrix:
+      - SERVICE: [backend, frontend]
+  before_script:
+    - |
+      echo "Waiting for the Docker daemon..."
+      for attempt in $(seq 1 30); do
+        docker info >/dev/null 2>&1 && break
+        sleep 1
+      done
+      docker info >/dev/null
+  script:
+    - |
+      IMAGE="$CI_REGISTRY_IMAGE/$SERVICE"
+      SHA_TAG="$CI_COMMIT_SHORT_SHA"
+      REF_TAG="$CI_COMMIT_REF_SLUG"
 
+      docker build --pull \
+        --file "./$SERVICE/Dockerfile" \
+        --tag "$IMAGE:$SHA_TAG" \
+        --tag "$IMAGE:$REF_TAG" \
+        "./$SERVICE"
+
+      # Merge request pipelines verify that the image builds, but do not push.
+      if [ "$CI_PIPELINE_SOURCE" = "merge_request_event" ]; then
+        echo "Merge request pipeline: image built but not pushed."
+        exit 0
+      fi
+
+      echo "$CI_REGISTRY_PASSWORD" | docker login \
+        -u "$CI_REGISTRY_USER" \
+        --password-stdin "$CI_REGISTRY"
+
+      docker push "$IMAGE:$SHA_TAG"
+      docker push "$IMAGE:$REF_TAG"
+
+      if [ "$CI_COMMIT_BRANCH" = "$CI_DEFAULT_BRANCH" ]; then
+        docker tag "$IMAGE:$SHA_TAG" "$IMAGE:latest"
+        docker push "$IMAGE:latest"
+      fi
 
 sast:
   stage: test
