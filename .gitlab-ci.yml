@@ -32,3 +32,4 @@ backend-test:
       path:
         - .cache/uv
     before_scripts:
+      - cd backend
