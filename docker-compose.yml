@@ -9,9 +9,9 @@ services:
       POSTGRES_USER: ${DB_USER}
       POSTGRES_PASSWORD: ${DB_PASSWORD}
     ports:
-      - "5432:5432"
+      - ${DB_PORT:-5432}:5432
     volumes:
-      - counter-db-data:/var/lib/postresql/data
+      - counter-db-data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U counter -d counter"]
       interval: 5s
@@ -21,13 +21,20 @@ services:
   backend:
     build:
       context: ./backend
-      dockerfile: Dockerfile.distroless
+      dockerfile: ${BACKEND_DOCKERFILE:-Dockerfile.alpine}
+
+    depends_on:
+      db:
+        condition: service_healthy
+
     ports:
-      - "8000:8000"
+      - 8000:8000
+
     environment:
       STORAGE_BACKEND: ${STORAGE_BACKEND:-memory}
-      DATABASE_URL: postgresql://${DB_USER}:${DB_PASSWORD}@db:${DB_Port:-5432}/${DB_HOST}
-      CORS_ORIGINS: http://localhost:3000,http://localhost:5173
+      DATABASE_URL: postgresql://${DB_USER}:${DB_PASSWORD}@db:${DB_PORT:-5432}/${DB_HOST}
+      CORS_ORIGNS: http://localhost:3000,http://localhost:5173
+
     healthcheck:
       test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
       interval: 10s
@@ -39,11 +46,13 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile.distroless
-    ports:
-      - "3000:8080"
     depends_on:
       backend:
         condition: service_healthy
 
+    ports:
+      - 3000:8080
+
 volumes:
   counter-db-data:
+  

@@ -1,17 +1,36 @@
+# syntax=docker/dockerfile:1
+
+# =============================================================================
+# MULTI-STAGE, DISTROLESS
+#
+# * builder is a normal slim Debian image with uv
+# * runtime is Google's distroless Python image: no shell, no package
+#   manager, no compiler
+#
+# The Postgres driver is the interesting part here. PostgreSQL needs libpq,
+# which is a C library. ``psycopg[binary]`` ships libpq inside the Python
+# wheel, so the distroless image does not need to install system packages.
+#
+# Note: the distroless image currently ships Python 3.13 on Debian 13, so the
+# builder uses the same Python minor version and we copy the site-packages
+# directory (there is no working ``.venv/bin/python`` symlink to copy).
+#
+# Build:  docker build -f Dockerfile.distroless -t counter-backend:distroless .
+# =============================================================================
 FROM python:3.13-slim AS builder
 
 COPY --from=ghcr.io/astral-sh/uv:0.11.21 /uv /uvx /bin/
 
-ENV UV_COMPILE_BYTECORE=1 \
+ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy
 
 WORKDIR /app
 
 COPY pyproject.toml uv.lock ./
-
 RUN uv sync --frozen --no-dev
 
 COPY app ./app
+
 
 FROM gcr.io/distroless/python3-debian13:nonroot AS runtime
 
@@ -20,11 +39,12 @@ WORKDIR /app
 COPY --from=builder /app/.venv/lib/python3.13/site-packages /app/site-packages
 COPY --from=builder /app/app /app/app
 
-ENV PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONPATH="/app/site-packages"
+ENV PYTHONPATH="/app/site-packages" \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
 
 EXPOSE 8000
 
+# Override distroless' default "python" entrypoint.
 ENTRYPOINT ["/usr/bin/python3", "-m", "uvicorn"]
 CMD ["app.main:app", "--host", "0.0.0.0", "--port", "8000"]

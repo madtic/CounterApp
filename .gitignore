@@ -11,6 +11,20 @@ node_modules/
 dist/
 .vite/
 
+# CI caches
+.cache/
+.npm/
+.sonar/
+
+# Test and coverage reports
+.coverage
+coverage.xml
+pytest-report.xml
+htmlcov/
+
+# Sonar scanner working directory
+.scannerwork/
+
 # Environment files
 .env
 .env.*
@@ -19,5 +33,7 @@ dist/
 # Editors / OS
 .DS_Store
 .idea/
-.vscode/
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
 *.swp
