@@ -21,7 +21,9 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
-  # STAGE: TEST
+  # ==========================================
+  # SCHRITT 1: Tests & Security (Laufen parallel)
+  # ==========================================
   backend-test:
     runs-on: ubuntu-latest
     defaults:
@@ -117,9 +119,11 @@ jobs:
           head: ${{ github.ref_name }}
           extra_args: --only-verified
 
-  # STAGE: QUALITY
+  # ==========================================
+  # SCHRITT 2: SonarQube (Wartet auf Schritt 1)
+  # ==========================================
   sonarqube:
-    needs: [backend-test]
+    needs: [backend-test, frontend-test, sast, secret-detection]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Repository
@@ -153,9 +157,11 @@ jobs:
           fi
         if: env.SONAR_TOKEN != ''
 
-  # STAGE: BUILD
+  # ==========================================
+  # SCHRITT 3: Docker Build (Wartet auf Schritt 2)
+  # ==========================================
   docker-build:
-    needs: [backend-test, frontend-test, sonarqube, sast, secret-detection]
+    needs: [sonarqube]
     runs-on: ubuntu-latest
     if: github.event_name != 'workflow_dispatch'
     strategy:
@@ -194,7 +200,9 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
 
-  # STAGE: DEPLOY
+  # ==========================================
+  # SCHRITT 4: Deployment (Wartet auf Schritt 3)
+  # ==========================================
   deployment:
     needs: [docker-build]
     if: github.event_name == 'workflow_dispatch'
