@@ -119,6 +119,12 @@ snyk-frontend:
       snyk test --all-projects \
         --json-file-output=../snyk-frontend.json || true
     - snyk-to-html -i ../snyk-frontend.json -o ../snyk-frontend.html
+  artifacts:
+    when: always
+    expire_in: 1 week
+    paths:
+      - ../snyk-frontend.json
+      - ../snyk-frontend.html
 
 snyk-backend:
   extends: .snyk-cli
@@ -129,6 +135,16 @@ snyk-backend:
     - uv venv --seed --python 3.13 .venv
     - . .venv/bin/activate
     - uv pip install -r requirements.txt
+    - |
+      snyk test --file=requirements.txt --package-manager=pip \
+      --json-file-output=../snyk-backend.json || true
+    - snyk-to-html -i ../snyk-backend.json -o ../snyk-backend.html
+  artifacts:
+    when: always
+    expire_in: 1 week
+    paths:
+      - ../snyk-backend.json
+      - ../snyk-backend.html
 
 docker-build:
   stage: build
