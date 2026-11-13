@@ -134,6 +134,19 @@ SonarQube:
   rules:
     - if: $SNYK_TOKEN
 
+backend-sbom:
+  stage: quality
+  image: ghcr.io/astral-sh/uv:python3.13-bookworm-slim
+  script:
+    - cd backend
+    - uv export --frozen --no-dev --format cyclonedx1.5
+  artifacts:
+    when: always
+    expire_in: 1 week
+    paths:
+      - backend/sbom-backend-cdx.json
+    expose_as: "Backend SBOM"
+
 snyk-frontend:
   extends: .snyk-cli
   stage: quality
