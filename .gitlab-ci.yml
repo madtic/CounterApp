@@ -103,24 +103,16 @@ frontend-test:
 frontend-sbom:
   stage: test
   image: node:22-alpine
-  needs: []
-  cache:
-    key:
-      files:
-        - frontend/package-lock.json
-    paths:
-      - .npm
-  before_script:
-    - cd frontend
   script:
-    - npx --yes @cyclonedx/cyclonedx-npm --output-file ../frontend-sbom.cdx.json
+    - cd frontend
+    - npx --yes @cyclonedx/cyclonedx-npm --output-file frontend-sbom.cdx.json
   artifacts:
     when: always
     expire_in: 1 week
     reports:
-      cyclonedx: frontend-sbom.cdx.json
+      cyclonedx: frontend/frontend-sbom.cdx.json
     paths:
-      - frontend-sbom.cdx.json
+      - frontend/frontend-sbom.cdx.json
     expose_as: "Frontend SBOM"
 
 backend-sbom:
