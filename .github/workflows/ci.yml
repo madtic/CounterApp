@@ -2,9 +2,9 @@ name: CI/CD Pipeline
 
 on:
   push:
-    branches: [ "main", "master" ]
+    branches: [ "main", "master", "Vorlesung" ]
   pull_request:
-    branches: [ "main", "master" ]
+    branches: [ "main", "master", "Vorlesung" ]
   workflow_dispatch:
     inputs:
       action:
