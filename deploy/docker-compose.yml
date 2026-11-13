@@ -38,10 +38,10 @@ services:
         - python3
         - -c
         - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"
-      interval: 10s
+      interval: 5s
       timeout: 3s
-      retries: 5
-      start_period: 10s
+      retries: 10
+      start_period: 5s
     restart: unless-stopped
 
   frontend:
@@ -51,6 +51,16 @@ services:
     depends_on:
       backend:
         condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "require('http').get('http://127.0.0.1:8080', (res) => process.exit(res.statusCode < 500 ? 0 : 1))"
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
     restart: unless-stopped
 
 volumes:
