@@ -301,32 +301,33 @@ snyk-backend:
       - snyk-backend.json
     expose_as: "Snyk backend JSON"
 
-snyk-html-report:
-  stage: quality
-  image: node:22-alpine
-  allow_failure: true
-  rules:
-    - if: $SNYK_TOKEN
-  needs:
-    - job: snyk-backend
-      optional: true
-    - job: snyk-frontend
-      optional: true
-  script:
-    - |
-      if [ -f snyk-backend.json ]; then
-        npx --yes snyk-to-html -i snyk-backend.json -o snyk-backend.html
-      fi
-      if [ -f snyk-frontend.json ]; then
-        npx --yes snyk-to-html -i snyk-frontend.json -o snyk-frontend.html
-      fi
-  artifacts:
-    when: always
-    expire_in: 1 week
-    paths:
-      - snyk-backend.html
-      - snyk-frontend.html
-    expose_as: "Snyk HTML Reports"
+#obolete use trivy report instead
+#snyk-html-report:
+#  stage: quality
+#  image: node:22-alpine
+#  allow_failure: true
+#  rules:
+#    - if: $SNYK_TOKEN
+#  needs:
+#    - job: snyk-backend
+#      optional: true
+#    - job: snyk-frontend
+#      optional: true
+#  script:
+#    - |
+#      if [ -f snyk-backend.json ]; then
+#        npx --yes snyk-to-html -i snyk-backend.json -o snyk-backend.html
+#      fi
+#      if [ -f snyk-frontend.json ]; then
+#        npx --yes snyk-to-html -i snyk-frontend.json -o snyk-frontend.html
+#      fi
+#  artifacts:
+#    when: always
+#    expire_in: 1 week
+#    paths:
+#      - snyk-backend.html
+#      - snyk-frontend.html
+#    expose_as: "Snyk HTML Reports"
 
 # =============================================================================
 # Stage: Build (Docker with BuildKit & Registry Layer Caching)
