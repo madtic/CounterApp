@@ -48,6 +48,9 @@ Implemented` and is the first exercise.
 │   └── nginx.conf
 ```
 
+[![pipeline status](https://gitlab.com/<group>/<project>/badges/main/pipeline.svg)](https://gitlab.com/<group>/<project>/-/commits/main)
+[![coverage report](https://gitlab.com/<group>/<project>/badges/main/coverage.svg)](https://gitlab.com/<group>/<project>/-/commits/main)
+
 ---
 
 ## API

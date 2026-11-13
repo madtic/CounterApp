@@ -59,6 +59,7 @@ lint-scripts:
 backend-test:
   stage: test
   image: ghcr.io/astral-sh/uv:python3.13-bookworm-slim
+  needs: []
   cache:
     key:
       files:
@@ -69,6 +70,7 @@ backend-test:
     - cd backend
   script:
     - uv sync --frozen
+    - uv run ruff check --output-format=gitlab --output-file=gl-codequality.json . || true
     - uv run ruff check .
     - uv run ty check
     - uv run pytest --cov=app --cov-report=xml:coverage.xml --cov-report=term --junitxml=pytest-report.xml --junit-prefix=backend
@@ -81,13 +83,16 @@ backend-test:
       coverage_report:
         coverage_format: cobertura
         path: backend/coverage.xml
+      codequality: backend/gl-codequality.json
     paths:
       - backend/coverage.xml
       - backend/pytest-report.xml
+      - backend/gl-codequality.json
 
 frontend-test:
   stage: test
   image: node:22-alpine
+  needs: []
   cache:
     key:
       files:
@@ -103,6 +108,7 @@ frontend-test:
 frontend-sbom:
   stage: quality
   image: node:22-alpine
+  needs: []
   script:
     - cd frontend
     - npx --yes @cyclonedx/cyclonedx-npm --package-lock-only --output-file frontend-sbom.cdx.json
@@ -118,12 +124,15 @@ frontend-sbom:
 backend-sbom:
   stage: quality
   image: ghcr.io/astral-sh/uv:python3.13-bookworm-slim
+  needs: []
   script:
     - cd backend
     - uv export --frozen --no-dev --format cyclonedx1.5 -o sbom-backend-cdx.json
   artifacts:
     when: always
     expire_in: 1 week
+    reports:
+      cyclonedx: backend/sbom-backend-cdx.json
     paths:
       - backend/sbom-backend-cdx.json
     expose_as: "Backend SBOM"
@@ -337,6 +346,7 @@ deploy:
     name: local
     url: http://localhost:$FRONTEND_PORT
     on_stop: undeploy
+    deployment_tier: development
   script:
     - bash deploy/deploy.sh
     - |
