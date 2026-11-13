@@ -22,7 +22,7 @@ curl -s -u admin:admin -X POST "http://localhost:9000/api/users/change_password"
 echo "Admin password updated."
 
 # 4. Generate a persistent API token for your CI/CD pipeline
-TOKEN_RESPONSE=$(curl -s -u admin:$NEW_PASSWORD -X POST "http://localhost:9000/api/user_tokens/generate" \
+TOKEN_RESPONSE=$(curl -s -u "admin:$NEW_PASSWORD" -X POST "http://localhost:9000/api/user_tokens/generate" \
   --data-urlencode "name=cicd-pipeline-token")
 
 # Extract the token string (requires jq or basic grep/sed)

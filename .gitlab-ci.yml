@@ -6,6 +6,9 @@
 # Note that environment variables can be set in several places
 # See https://docs.gitlab.com/ci/variables/#cicd-variable-precedence
 
+default:
+  interruptible: true
+
 workflow:
   rules:
     # Run pipeline on merge requests
@@ -21,16 +24,18 @@ stages:
   - test
   - quality
   - build
+  - container-scanning
   - deploy
 
 variables:
   UV_CACHE_DIR: "$CI_PROJECT_DIR/.cache/uv"
   npm_config_cache: "$CI_PROJECT_DIR/.npm"
 
-# Security Scanning (SAST and Secret Detection run early in parallel with tests)
+# Security Scanning (SAST, Secret Detection, Container Scanning)
 include:
   - template: Security/SAST.gitlab-ci.yml
   - template: Security/Secret-Detection.gitlab-ci.yml
+  - template: Security/Container-Scanning.gitlab-ci.yml
 
 sast:
   stage: test
@@ -39,6 +44,17 @@ sast:
 secret_detection:
   stage: test
   needs: []
+
+container_scanning:
+  rules:
+    - when: never # Base placeholder disabled in favor of per-service scan jobs
+
+lint-scripts:
+  stage: test
+  image: koalaman/shellcheck-alpine:stable
+  needs: []
+  script:
+    - shellcheck deploy/*.sh sonarqube.sh
 
 backend-test:
   stage: test
@@ -84,7 +100,43 @@ frontend-test:
     - npm ci
     - npm run build
 
-SonarQube:
+frontend-sbom:
+  stage: test
+  image: node:22-alpine
+  needs: []
+  cache:
+    key:
+      files:
+        - frontend/package-lock.json
+    paths:
+      - .npm
+  before_script:
+    - cd frontend
+  script:
+    - npx --yes @cyclonedx/cyclonedx-npm --output-file ../frontend-sbom.cdx.json
+  artifacts:
+    when: always
+    expire_in: 1 week
+    reports:
+      cyclonedx: frontend-sbom.cdx.json
+    paths:
+      - frontend-sbom.cdx.json
+    expose_as: "Frontend SBOM"
+
+backend-sbom:
+  stage: quality
+  image: ghcr.io/astral-sh/uv:python3.13-bookworm-slim
+  script:
+    - cd backend
+    - uv export --frozen --no-dev --format cyclonedx1.5 -o sbom-backend-cdx.json
+  artifacts:
+    when: always
+    expire_in: 1 week
+    paths:
+      - backend/sbom-backend-cdx.json
+    expose_as: "Backend SBOM"
+
+sonarqube:
   stage: quality
   tags:
     - shell
@@ -133,19 +185,6 @@ SonarQube:
   image: node:22-bookworm-slim
   rules:
     - if: $SNYK_TOKEN
-
-backend-sbom:
-  stage: quality
-  image: ghcr.io/astral-sh/uv:python3.13-bookworm-slim
-  script:
-    - cd backend
-    - uv export --frozen --no-dev --format cyclonedx1.5 -o sbom-backend-cdx.json
-  artifacts:
-    when: always
-    expire_in: 1 week
-    paths:
-      - backend/sbom-backend-cdx.json
-    expose_as: "Backend SBOM"
 
 snyk-frontend:
   extends: .snyk-cli
@@ -263,6 +302,24 @@ docker-build-frontend:
     SERVICE: frontend
   needs: ["frontend-test"]
 
+container-scanning-backend:
+  extends: container_scanning
+  stage: container-scanning
+  needs: ["docker-build-backend"]
+  variables:
+    CS_IMAGE: "$CI_REGISTRY_IMAGE/backend:$CI_COMMIT_SHORT_SHA"
+  rules:
+    - if: '$CI_COMMIT_BRANCH'
+
+container-scanning-frontend:
+  extends: container_scanning
+  stage: container-scanning
+  needs: ["docker-build-frontend"]
+  variables:
+    CS_IMAGE: "$CI_REGISTRY_IMAGE/frontend:$CI_COMMIT_SHORT_SHA"
+  rules:
+    - if: '$CI_COMMIT_BRANCH'
+
 .deploy-job:
   stage: deploy
   tags:
@@ -290,6 +347,11 @@ deploy:
     on_stop: undeploy
   script:
     - bash deploy/deploy.sh
+    - |
+      echo "Running post-deployment smoke tests..."
+      curl --fail --retry 10 --retry-delay 2 --retry-connrefused "http://localhost:${BACKEND_PORT}/health"
+      curl --fail --retry 10 --retry-delay 2 --retry-connrefused "http://localhost:${FRONTEND_PORT}" > /dev/null
+      echo "Smoke tests passed: Backend and Frontend are healthy."
 
 undeploy:
   extends: .deploy-job
