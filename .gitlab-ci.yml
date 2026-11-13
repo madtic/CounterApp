@@ -38,6 +38,7 @@ variables:
   # Package manager caches within project workspace for GitLab Runner persistence
   UV_CACHE_DIR: "$CI_PROJECT_DIR/.cache/uv"
   npm_config_cache: "$CI_PROJECT_DIR/.npm"
+  TRIVY_CACHE_DIR: "$CI_PROJECT_DIR/.cache/trivy"
 
   # Security Analyzers Configuration (Best Practice: Exclude non-production directories)
   SECURE_ANALYZERS_PREFIX: "registry.gitlab.com/gitlab-org/security-products/analyzers"
@@ -452,34 +453,53 @@ container-scanning-frontend:
     - if: '$CI_COMMIT_TAG'
 
 # =============================================================================
-# Stage: Report (Unified SBOM & Security Dashboard)
+# Stage: Report (Grouped SBOM & CVE HTML Reports via Trivy)
 # =============================================================================
-security-dashboard:
+trivy-sbom-cve-reports:
   stage: report
-  image: python:3.13-slim
+  image:
+    name: aquasec/trivy:latest
+    entrypoint: [""]
   when: always
+  cache:
+    key: trivy-vuln-db
+    paths:
+      - .cache/trivy
   needs:
     - job: frontend-sbom
       optional: true
     - job: backend-sbom
-      optional: true
-    - job: snyk-frontend
-      optional: true
-    - job: snyk-backend
       optional: true
     - job: container-scanning-backend
       optional: true
     - job: container-scanning-frontend
       optional: true
   script:
-    - python3 scripts/build_security_dashboard.py
+    - mkdir -p reports
+    - |
+      for item in \
+        "frontend-app:frontend/frontend-sbom.cdx.json" \
+        "backend-app:backend/sbom-backend-cdx.json" \
+        "backend-container:sbom-container-backend.cdx.json" \
+        "frontend-container:sbom-container-frontend.cdx.json"; do
+        NAME="${item%%:*}"
+        FILE="${item#*:}"
+        if [ -f "$FILE" ]; then
+          echo "Generating Trivy SBOM + CVE HTML report for ${NAME} (${FILE})..."
+          trivy sbom "$FILE" \
+            --format template \
+            --template "@/contrib/html.tpl" \
+            --output "reports/${NAME}-report.html"
+        else
+          echo "Skipping ${NAME}: ${FILE} not found."
+        fi
+      done
   artifacts:
     when: always
     expire_in: 2 weeks
     paths:
-      - security-dashboard.html
-      - merged-sbom.cdx.json
-    expose_as: "Unified Security SBOM Dashboard"
+      - reports/
+    expose_as: "Grouped SBOM CVE HTML Reports"
 
 # =============================================================================
 # Stage: Deploy (Environment Tracking & Health Smoke Tests)
