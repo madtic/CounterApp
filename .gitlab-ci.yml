@@ -128,6 +128,7 @@ snyk-backend:
     - uv export --frozen --no-dev --no-hashes --format requirements.txt -o requirements.txt
     - uv venv --seed --python 3.13 .venv
     - . .venv/bin/activate
+    - uv pip install -r requirements.txt
 
 docker-build:
   stage: build
