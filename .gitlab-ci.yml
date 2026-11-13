@@ -233,7 +233,9 @@ sonarqube:
 
 snyk-frontend:
   extends: .snyk-cli
-  image: snyk/snyk:node-22
+  image:
+    name: snyk/snyk:node-22
+    entrypoint: [""]
   needs:
     - job: frontend-test
       artifacts: false
@@ -268,7 +270,9 @@ snyk-frontend:
 
 snyk-backend:
   extends: .snyk-cli
-  image: snyk/snyk:python-3.13
+  image:
+    name: snyk/snyk:python-3.13
+    entrypoint: [""]
   needs:
     - job: backend-sbom
   before_script:
