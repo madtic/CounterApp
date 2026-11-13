@@ -99,7 +99,6 @@ frontend-test:
 snyk-cli:
   stage: quality
   image: node:22-bookworm-slim
-  cache: {}
   before_script:
     - apt-get update && apt-get install -y --no-install-recommends curl ca-certificates
     - curl -sL https://static.snyk.io/cli/latest/snyk-linux -o /usr/local/bin/snyk
@@ -121,6 +120,14 @@ snyk-frontend:
         --json-file-output=../snyk-frontend.json || true
     - snyk-to-html -i ../snyk-frontend.json -o ../snyk-frontend.html
 
+snyk-backend:
+  extends: .snyk-cli
+  stage: quality
+  script:
+    - cd backend
+    - uv export --frozen --no-dev --no-hashes --format requirements.txt -o requirements.txt
+    - uv venv --seed --python 3.13 .venv
+    - . .venv/bin/activate
 
 docker-build:
   stage: build
