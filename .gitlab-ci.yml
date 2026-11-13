@@ -105,7 +105,7 @@ frontend-sbom:
   image: node:22-alpine
   script:
     - cd frontend
-    - npx --yes @cyclonedx/cyclonedx-npm --output-file frontend-sbom.cdx.json
+    - npx --yes @cyclonedx/cyclonedx-npm --package-lock-only --output-file frontend-sbom.cdx.json
   artifacts:
     when: always
     expire_in: 1 week
@@ -128,7 +128,7 @@ backend-sbom:
       - backend/sbom-backend-cdx.json
     expose_as: "Backend SBOM"
 
-sonarqube:
+sonarcube:
   stage: quality
   tags:
     - shell
