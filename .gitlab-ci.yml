@@ -101,7 +101,7 @@ frontend-test:
     - npm run build
 
 frontend-sbom:
-  stage: test
+  stage: quality
   image: node:22-alpine
   script:
     - cd frontend
