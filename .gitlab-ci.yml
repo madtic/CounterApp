@@ -192,6 +192,7 @@ sonarqube:
     - shell
   variables:
     GIT_DEPTH: "0"
+    GIT_STRATEGY: "fetch"
   needs:
     - backend-test
   before_script:
@@ -225,9 +226,10 @@ sonarqube:
     - when: manual
       allow_failure: true
 
-# Official Snyk containers with pre-installed Snyk CLI and respective runtimes
+# Official Snyk containers with pre-installed Snyk CLI, snyk-to-html, and respective runtimes
 .snyk-cli:
   stage: quality
+  allow_failure: true
   rules:
     - if: $SNYK_TOKEN
 
@@ -245,21 +247,23 @@ snyk-frontend:
         - frontend/package-lock.json
     paths:
       - .npm
-  before_script:
-    - npm install --global snyk-to-html
   script:
     - cd frontend
     - npm ci --prefer-offline
     - |
-      snyk test --strict-out-of-sync=false \
-        --json-file-output=../snyk-frontend.json || true
-    - |
+      set +e
+      snyk test --strict-out-of-sync=false         --json-file-output=../snyk-frontend.json
+      SNYK_EXIT=$?
+      set -e
+
       if [ -f ../snyk-frontend.json ]; then
         snyk-to-html -i ../snyk-frontend.json -o ../snyk-frontend.html
       else
-        echo "ERROR: snyk test failed to generate snyk-frontend.json report"
+        echo "ERROR: snyk test failed to generate snyk-frontend.json report" >&2
         exit 1
       fi
+
+      exit $SNYK_EXIT
   artifacts:
     when: always
     expire_in: 1 week
@@ -275,20 +279,22 @@ snyk-backend:
     entrypoint: [""]
   needs:
     - job: backend-sbom
-  before_script:
-    - npm install --global snyk-to-html
   script:
     - cd backend
     - |
-      snyk test --file=requirements.txt --package-manager=pip \
-        --json-file-output=../snyk-backend.json -- --allow-missing || true
-    - |
+      set +e
+      snyk test --file=requirements.txt --package-manager=pip         --json-file-output=../snyk-backend.json -- --allow-missing
+      SNYK_EXIT=$?
+      set -e
+
       if [ -f ../snyk-backend.json ]; then
         snyk-to-html -i ../snyk-backend.json -o ../snyk-backend.html
       else
-        echo "ERROR: snyk test failed to generate snyk-backend.json report"
+        echo "ERROR: snyk test failed to generate snyk-backend.json report" >&2
         exit 1
       fi
+
+      exit $SNYK_EXIT
   artifacts:
     when: always
     expire_in: 1 week
@@ -343,7 +349,7 @@ snyk-backend:
         --tag "$IMAGE:$SHA_TAG" \
         --tag "$IMAGE:$REF_TAG" \
         "./$SERVICE"
-
+      
       if [ -n "$CI_REGISTRY_PASSWORD" ]; then
         # Push commit SHA image tag (required for Container Scanning in branches and MRs)
         docker push "$IMAGE:$SHA_TAG"
@@ -382,22 +388,26 @@ docker-build-frontend:
 container-scanning-backend:
   extends: container_scanning
   stage: container-scanning
-  needs: ["docker-build-backend"]
+  needs:
+    - docker-build-backend
   variables:
     CS_IMAGE: "$CI_REGISTRY_IMAGE/backend:$CI_COMMIT_SHORT_SHA"
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
     - if: '$CI_COMMIT_BRANCH'
+    - if: '$CI_COMMIT_TAG'
 
 container-scanning-frontend:
   extends: container_scanning
   stage: container-scanning
-  needs: ["docker-build-frontend"]
+  needs:
+    - docker-build-frontend
   variables:
     CS_IMAGE: "$CI_REGISTRY_IMAGE/frontend:$CI_COMMIT_SHORT_SHA"
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
     - if: '$CI_COMMIT_BRANCH'
+    - if: '$CI_COMMIT_TAG'
 
 # =============================================================================
 # Stage: Deploy (Environment Tracking & Health Smoke Tests)
@@ -443,7 +453,7 @@ deploy:
           break
         fi
         if [ "$attempt" -eq 15 ]; then
-          echo "ERROR: Frontend failed to respond on port ${FRONTEND_PORT} after 15 attempts."
+          echo "ERROR: Frontend failed to respond on port ${FRONTEND_PORT} after 15 attempts." >&2
           curl -v "http://localhost:${FRONTEND_PORT}" || true
           exit 1
         fi
