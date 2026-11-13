@@ -139,7 +139,7 @@ backend-sbom:
   image: ghcr.io/astral-sh/uv:python3.13-bookworm-slim
   script:
     - cd backend
-    - uv export --frozen --no-dev --format cyclonedx1.5
+    - uv export --frozen --no-dev --format cyclonedx1.5 -o sbom-backend-cdx.json
   artifacts:
     when: always
     expire_in: 1 week
