@@ -192,7 +192,7 @@ snyk-frontend:
   stage: quality
   needs: ["frontend-test"]
   before_script:
-    - npm install --global snyk snyk-to-html
+    - npm install --global snyk@1.1308.4 snyk-to-html
   script:
     - cd frontend
     - |
@@ -213,7 +213,7 @@ snyk-backend:
   needs: ["backend-test"]
   before_script:
     - apt-get update && apt-get install -y --no-install-recommends curl ca-certificates
-    - curl -sL https://static.snyk.io/cli/latest/snyk-linux -o /usr/local/bin/snyk
+    - curl -sL https://static.snyk.io/cli/v1.1308.4/snyk-linux -o /usr/local/bin/snyk
     - chmod +x /usr/local/bin/snyk
     - npm install --global snyk-to-html
     - curl -LsSf https://astral.sh/uv/install.sh | sh
