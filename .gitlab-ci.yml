@@ -31,6 +31,7 @@ stages:
   - quality
   - build
   - container-scanning
+  - report
   - deploy
 
 variables:
@@ -226,7 +227,7 @@ sonarqube:
     - when: manual
       allow_failure: true
 
-# Official Snyk containers with pre-installed Snyk CLI, snyk-to-html, and respective runtimes
+# Official Snyk containers with pre-installed Snyk CLI and respective runtimes
 .snyk-cli:
   stage: quality
   allow_failure: true
@@ -252,13 +253,12 @@ snyk-frontend:
     - npm ci --prefer-offline
     - |
       set +e
-      snyk test --strict-out-of-sync=false         --json-file-output=../snyk-frontend.json
+      snyk test --strict-out-of-sync=false \
+        --json-file-output=../snyk-frontend.json
       SNYK_EXIT=$?
       set -e
 
-      if [ -f ../snyk-frontend.json ]; then
-        snyk-to-html -i ../snyk-frontend.json -o ../snyk-frontend.html
-      else
+      if [ ! -f ../snyk-frontend.json ]; then
         echo "ERROR: snyk test failed to generate snyk-frontend.json report" >&2
         exit 1
       fi
@@ -269,8 +269,7 @@ snyk-frontend:
     expire_in: 1 week
     paths:
       - snyk-frontend.json
-      - snyk-frontend.html
-    expose_as: "Snyk frontend report"
+    expose_as: "Snyk frontend JSON"
 
 snyk-backend:
   extends: .snyk-cli
@@ -283,13 +282,12 @@ snyk-backend:
     - cd backend
     - |
       set +e
-      snyk test --file=requirements.txt --package-manager=pip         --json-file-output=../snyk-backend.json -- --allow-missing
+      snyk test --file=requirements.txt --package-manager=pip \
+        --json-file-output=../snyk-backend.json -- --allow-missing
       SNYK_EXIT=$?
       set -e
 
-      if [ -f ../snyk-backend.json ]; then
-        snyk-to-html -i ../snyk-backend.json -o ../snyk-backend.html
-      else
+      if [ ! -f ../snyk-backend.json ]; then
         echo "ERROR: snyk test failed to generate snyk-backend.json report" >&2
         exit 1
       fi
@@ -300,8 +298,34 @@ snyk-backend:
     expire_in: 1 week
     paths:
       - snyk-backend.json
+    expose_as: "Snyk backend JSON"
+
+snyk-html-report:
+  stage: quality
+  image: node:22-alpine
+  allow_failure: true
+  rules:
+    - if: $SNYK_TOKEN
+  needs:
+    - job: snyk-backend
+      optional: true
+    - job: snyk-frontend
+      optional: true
+  script:
+    - |
+      if [ -f snyk-backend.json ]; then
+        npx --yes snyk-to-html -i snyk-backend.json -o snyk-backend.html
+      fi
+      if [ -f snyk-frontend.json ]; then
+        npx --yes snyk-to-html -i snyk-frontend.json -o snyk-frontend.html
+      fi
+  artifacts:
+    when: always
+    expire_in: 1 week
+    paths:
       - snyk-backend.html
-    expose_as: "Snyk backend report"
+      - snyk-frontend.html
+    expose_as: "Snyk HTML Reports"
 
 # =============================================================================
 # Stage: Build (Docker with BuildKit & Registry Layer Caching)
@@ -349,7 +373,7 @@ snyk-backend:
         --tag "$IMAGE:$SHA_TAG" \
         --tag "$IMAGE:$REF_TAG" \
         "./$SERVICE"
-      
+
       if [ -n "$CI_REGISTRY_PASSWORD" ]; then
         # Push commit SHA image tag (required for Container Scanning in branches and MRs)
         docker push "$IMAGE:$SHA_TAG"
@@ -392,6 +416,15 @@ container-scanning-backend:
     - docker-build-backend
   variables:
     CS_IMAGE: "$CI_REGISTRY_IMAGE/backend:$CI_COMMIT_SHORT_SHA"
+  after_script:
+    - '[ -f gl-sbom-report.cdx.json ] && mv gl-sbom-report.cdx.json sbom-container-backend.cdx.json || true'
+    - '[ -f gl-container-scanning-report.json ] && mv gl-container-scanning-report.json cs-backend.json || true'
+  artifacts:
+    when: always
+    expire_in: 1 week
+    paths:
+      - sbom-container-backend.cdx.json
+      - cs-backend.json
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
     - if: '$CI_COMMIT_BRANCH'
@@ -404,10 +437,49 @@ container-scanning-frontend:
     - docker-build-frontend
   variables:
     CS_IMAGE: "$CI_REGISTRY_IMAGE/frontend:$CI_COMMIT_SHORT_SHA"
+  after_script:
+    - '[ -f gl-sbom-report.cdx.json ] && mv gl-sbom-report.cdx.json sbom-container-frontend.cdx.json || true'
+    - '[ -f gl-container-scanning-report.json ] && mv gl-container-scanning-report.json cs-frontend.json || true'
+  artifacts:
+    when: always
+    expire_in: 1 week
+    paths:
+      - sbom-container-frontend.cdx.json
+      - cs-frontend.json
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
     - if: '$CI_COMMIT_BRANCH'
     - if: '$CI_COMMIT_TAG'
+
+# =============================================================================
+# Stage: Report (Unified SBOM & Security Dashboard)
+# =============================================================================
+security-dashboard:
+  stage: report
+  image: python:3.13-slim
+  when: always
+  needs:
+    - job: frontend-sbom
+      optional: true
+    - job: backend-sbom
+      optional: true
+    - job: snyk-frontend
+      optional: true
+    - job: snyk-backend
+      optional: true
+    - job: container-scanning-backend
+      optional: true
+    - job: container-scanning-frontend
+      optional: true
+  script:
+    - python3 scripts/build_security_dashboard.py
+  artifacts:
+    when: always
+    expire_in: 2 weeks
+    paths:
+      - security-dashboard.html
+      - merged-sbom.cdx.json
+    expose_as: "Unified Security SBOM Dashboard"
 
 # =============================================================================
 # Stage: Deploy (Environment Tracking & Health Smoke Tests)
