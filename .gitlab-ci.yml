@@ -174,7 +174,7 @@ backend-sbom:
   script:
     - cd backend
     - uv export --frozen --no-dev --format cyclonedx1.5 -o sbom-backend-cdx.json
-    # Export clean requirements.txt for Snyk scanning (avoids compiling in Snyk job)
+    # Export clean requirements.txt for Snyk scanning
     - uv export --frozen --no-dev --no-hashes --format requirements.txt -o requirements.txt
   artifacts:
     when: always
@@ -225,15 +225,15 @@ sonarqube:
     - when: manual
       allow_failure: true
 
+# Official Snyk containers with pre-installed Snyk CLI and respective runtimes
 .snyk-cli:
   stage: quality
-  image: node:22-bookworm-slim
   rules:
     - if: $SNYK_TOKEN
 
 snyk-frontend:
   extends: .snyk-cli
-  stage: quality
+  image: snyk/snyk:node-22
   needs:
     - job: frontend-test
       artifacts: false
@@ -244,7 +244,7 @@ snyk-frontend:
     paths:
       - .npm
   before_script:
-    - npm install --global snyk snyk-to-html
+    - npm install --global snyk-to-html
   script:
     - cd frontend
     - npm ci --prefer-offline
@@ -268,16 +268,16 @@ snyk-frontend:
 
 snyk-backend:
   extends: .snyk-cli
-  stage: quality
+  image: snyk/snyk:python-3.13
   needs:
     - job: backend-sbom
   before_script:
-    - npm install --global snyk snyk-to-html
+    - npm install --global snyk-to-html
   script:
     - cd backend
     - |
       snyk test --file=requirements.txt --package-manager=pip \
-        --json-file-output=../snyk-backend.json || true
+        --json-file-output=../snyk-backend.json -- --allow-missing || true
     - |
       if [ -f ../snyk-backend.json ]; then
         snyk-to-html -i ../snyk-backend.json -o ../snyk-backend.html
