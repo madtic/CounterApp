@@ -5,16 +5,40 @@
 # Container Scanning customization: https://docs.gitlab.com/user/application_security/container_scanning/#customizing-analyzer-behavior
 # Note that environment variables can be set in several places
 # See https://docs.gitlab.com/ci/variables/#cicd-variable-precedence
+
+workflow:
+  rules:
+    # Run pipeline on merge requests
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    # Prevent duplicate pipelines: do not run branch pipeline if an open merge request exists
+    - if: '$CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS'
+      when: never
+    # Run on branch push (without open MR) and tags
+    - if: '$CI_COMMIT_BRANCH'
+    - if: '$CI_COMMIT_TAG'
+
 stages:
-- test
-- quality
-- build
-- secret-detection
-- deploy
+  - test
+  - quality
+  - build
+  - deploy
 
 variables:
   UV_CACHE_DIR: "$CI_PROJECT_DIR/.cache/uv"
   npm_config_cache: "$CI_PROJECT_DIR/.npm"
+
+# Security Scanning (SAST and Secret Detection run early in parallel with tests)
+include:
+  - template: Security/SAST.gitlab-ci.yml
+  - template: Security/Secret-Detection.gitlab-ci.yml
+
+sast:
+  stage: test
+  needs: []
+
+secret_detection:
+  stage: test
+  needs: []
 
 backend-test:
   stage: test
@@ -31,10 +55,16 @@ backend-test:
     - uv sync --frozen
     - uv run ruff check .
     - uv run ty check
-    - uv run pytest --cov=app --cov-report=xml:coverage.xml --junitxml=pytest-report.xml --junit-prefix=backend
+    - uv run pytest --cov=app --cov-report=xml:coverage.xml --cov-report=term --junitxml=pytest-report.xml --junit-prefix=backend
+  coverage: '/TOTAL.*\s+(\d+%)$/'
   artifacts:
     when: always
     expire_in: 1 week
+    reports:
+      junit: backend/pytest-report.xml
+      coverage_report:
+        coverage_format: cobertura
+        path: backend/coverage.xml
     paths:
       - backend/coverage.xml
       - backend/pytest-report.xml
@@ -54,65 +84,62 @@ frontend-test:
     - npm ci
     - npm run build
 
-#sonarqube:
-#  stage: quality
-#  tags:
-#    - shell
-#  variables:
-#    GIT_DEPTH: "0"
-#  dependencies:
-#    - backend-test
-#  script:
-#    - |
-#      cd "${CI_PROJECT_DIR}"
-#
-#      if ! command -v uv >/dev/null 2>&1; then
-#        echo "ERROR: uv is not installed on the shell runner." >&2
-#        echo "Install uv: https://docs.astral.sh/uv/getting-started/installation/" >&2
-#        exit 1
-#      fi
-#
-#      if [ ! -f backend/coverage.xml ]; then
-#        echo "ERROR: backend/coverage.xml was not downloaded from the test job." >&2
-#        exit 1
-#      fi
-#
-#      export SONAR_HOST_URL="${SONAR_HOST_URL:-http://localhost:9000}"
-#
-#      # The coverage report contains the absolute path of backend/app from the
-#      # test job. Normalize it so the scanner can resolve the files regardless
-#      # of the runner's build directory.
-#      sed -i 's#<source>.*</source>#<source>backend/app</source>#' backend/coverage.xml
-#
-#      if [ -n "${SONAR_ORGANIZATION:-}" ]; then
-#        uv run --project backend pysonar \
-#          -Dsonar.host.url="${SONAR_HOST_URL}" \
-#          -Dsonar.organization="${SONAR_ORGANIZATION}"
-#      else
-#        uv run --project backend pysonar -Dsonar.host.url="${SONAR_HOST_URL}"
-#      fi
-#  rules:
-#    - if: "$SONAR_TOKEN"
-#      when: on_success
-#    - when: never
+SonarQube:
+  stage: quality
+  tags:
+    - shell
+  variables:
+    GIT_DEPTH: "0"
+  needs:
+    - backend-test
+  before_script:
+    - export PATH="$HOME/.local/bin:$PATH"
+  script:
+    - |
+      cd "${CI_PROJECT_DIR}"
+
+      if ! command -v uv >/dev/null 2>&1; then
+        echo "ERROR: uv is not installed on the shell runner." >&2
+        echo "Install uv: https://docs.astral.sh/uv/getting-started/installation/" >&2
+        exit 1
+      fi
+
+      if [ ! -f backend/coverage.xml ]; then
+        echo "ERROR: backend/coverage.xml was not downloaded from the test job." >&2
+        exit 1
+      fi
+
+      export SONAR_HOST_URL="${SONAR_HOST_URL:-http://localhost:9000}"
+
+      # The coverage report contains the absolute path of backend/app from the
+      # test job. Normalize it so the scanner can resolve the files regardless
+      # of the runner's build directory.
+      sed -i 's#<source>.*</source>#<source>backend/app</source>#' backend/coverage.xml
+
+      if [ -n "${SONAR_ORGANIZATION:-}" ]; then
+        uv run --project backend pysonar \
+          -Dsonar.host.url="${SONAR_HOST_URL}" \
+          -Dsonar.organization="${SONAR_ORGANIZATION}"
+      else
+        uv run --project backend pysonar -Dsonar.host.url="${SONAR_HOST_URL}"
+      fi
+  rules:
+    - if: "$SONAR_TOKEN"
+    - when: manual
+      allow_failure: true
 
 .snyk-cli:
   stage: quality
   image: node:22-bookworm-slim
-  before_script:
-    - apt-get update && apt-get install -y --no-install-recommends curl ca-certificates
-    - curl -sL https://static.snyk.io/cli/latest/snyk-linux -o /usr/local/bin/snyk
-    - chmod +x /usr/local/bin/snyk
-    - npm install --global snyk-to-html
-    - curl -LsSf https://astral.sh/uv/install.sh | sh
-    - export PATH="$HOME/.local/bin:$PATH"
-    - uv python install 3.13
   rules:
     - if: $SNYK_TOKEN
 
 snyk-frontend:
   extends: .snyk-cli
   stage: quality
+  needs: ["frontend-test"]
+  before_script:
+    - npm install --global snyk snyk-to-html
   script:
     - cd frontend
     - |
@@ -130,6 +157,15 @@ snyk-frontend:
 snyk-backend:
   extends: .snyk-cli
   stage: quality
+  needs: ["backend-test"]
+  before_script:
+    - apt-get update && apt-get install -y --no-install-recommends curl ca-certificates
+    - curl -sL https://static.snyk.io/cli/latest/snyk-linux -o /usr/local/bin/snyk
+    - chmod +x /usr/local/bin/snyk
+    - npm install --global snyk-to-html
+    - curl -LsSf https://astral.sh/uv/install.sh | sh
+    - export PATH="$HOME/.local/bin:$PATH"
+    - uv python install 3.13
   script:
     - cd backend
     - uv export --frozen --no-dev --no-hashes --format requirements.txt -o requirements.txt
@@ -148,7 +184,7 @@ snyk-backend:
       - snyk-backend.html
     expose_as: "Snyk backend report"
 
-docker-build:
+.docker-build-base:
   stage: build
   image: docker:27
   services:
@@ -159,9 +195,7 @@ docker-build:
     DOCKER_TLS_CERTDIR: "/certs"
     DOCKER_TLS_VERIFY: "1"
     DOCKER_CERT_PATH: "/certs/client"
-  parallel:
-    matrix:
-      - SERVICE: [backend, frontend]
+    DOCKER_BUILDKIT: "1"
   before_script:
     - |
       echo "Waiting for the Docker daemon..."
@@ -176,7 +210,11 @@ docker-build:
       SHA_TAG="$CI_COMMIT_SHORT_SHA"
       REF_TAG="$CI_COMMIT_REF_SLUG"
 
+      # Pull latest image for layer caching
+      docker pull "$IMAGE:latest" || true
+
       docker build --pull \
+        --cache-from "$IMAGE:latest" \
         --file "./$SERVICE/Dockerfile" \
         --tag "$IMAGE:$SHA_TAG" \
         --tag "$IMAGE:$REF_TAG" \
@@ -200,14 +238,17 @@ docker-build:
         docker push "$IMAGE:latest"
       fi
 
-sast:
-  stage: test
-include:
-  - template: Security/SAST.gitlab-ci.yml
-  - template: Security/Secret-Detection.gitlab-ci.yml
-secret_detection:
-  stage: secret-detection
+docker-build-backend:
+  extends: .docker-build-base
+  variables:
+    SERVICE: backend
+  needs: ["backend-test"]
 
+docker-build-frontend:
+  extends: .docker-build-base
+  variables:
+    SERVICE: frontend
+  needs: ["frontend-test"]
 
 .deploy-job:
   stage: deploy
@@ -230,10 +271,17 @@ secret_detection:
 
 deploy:
   extends: .deploy-job
+  environment:
+    name: local
+    url: http://localhost:$FRONTEND_PORT
+    on_stop: undeploy
   script:
     - bash deploy/deploy.sh
 
 undeploy:
   extends: .deploy-job
+  environment:
+    name: local
+    action: stop
   script:
     - bash deploy/undeploy.sh
