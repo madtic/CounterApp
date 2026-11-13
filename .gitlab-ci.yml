@@ -125,6 +125,7 @@ snyk-frontend:
     paths:
       - ../snyk-frontend.json
       - ../snyk-frontend.html
+    expose_as: "Snyk frontend report"
 
 snyk-backend:
   extends: .snyk-cli
@@ -145,6 +146,7 @@ snyk-backend:
     paths:
       - ../snyk-backend.json
       - ../snyk-backend.html
+    expose_as: "Snyk backend report"
 
 docker-build:
   stage: build
