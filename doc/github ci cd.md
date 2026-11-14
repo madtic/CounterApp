@@ -1,5 +1,7 @@
 # GitHub Actions CI/CD und Self-Hosted-Runner
 
+**Student** Michael Tichelmann
+
 **Projekt:** CounterApp
 
 **Öffentliches Repository:** [github.com/madtic/CounterApp](https://github.com/madtic/CounterApp)
