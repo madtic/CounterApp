@@ -197,21 +197,32 @@ jobs:
     name: SonarQube Analysis
     runs-on: self-hosted
     needs: [backend-test]
-    if: ${{ secrets.SONAR_TOKEN != '' }}
     env:
       SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
       SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL || 'http://localhost:9000' }}
       SONAR_ORGANIZATION: ${{ vars.SONAR_ORGANIZATION }}
     steps:
+      - name: Check if SONAR_TOKEN is configured
+        id: check_secret
+        run: |
+          if [ -n "$SONAR_TOKEN" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "SONAR_TOKEN not set; skipping SonarQube analysis."
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          fi
       - uses: actions/checkout@v4
+        if: steps.check_secret.outputs.enabled == 'true'
         with:
           fetch-depth: 0
       - name: Download Backend Coverage
+        if: steps.check_secret.outputs.enabled == 'true'
         uses: actions/download-artifact@v4
         with:
           name: backend-test-reports
           path: backend
       - name: Run pysonar
+        if: steps.check_secret.outputs.enabled == 'true'
         run: |
           export PATH="$HOME/.local/bin:$PATH"
           if ! command -v uv >/dev/null 2>&1; then
@@ -232,25 +243,36 @@ jobs:
     name: Snyk Frontend Scan
     runs-on: ubuntu-latest
     needs: [frontend-test]
-    if: ${{ secrets.SNYK_TOKEN != '' }}
     continue-on-error: true
     env:
       SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
     steps:
+      - name: Check if SNYK_TOKEN is configured
+        id: check_secret
+        run: |
+          if [ -n "$SNYK_TOKEN" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "SNYK_TOKEN not set; skipping Snyk frontend scan."
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          fi
       - uses: actions/checkout@v4
+        if: steps.check_secret.outputs.enabled == 'true'
       - name: Set up Node 22
+        if: steps.check_secret.outputs.enabled == 'true'
         uses: actions/setup-node@v4
         with:
           node-version: "22"
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - name: Install Dependencies & Run Snyk
+        if: steps.check_secret.outputs.enabled == 'true'
         working-directory: frontend
         run: |
           npm ci --prefer-offline
           npx --yes snyk test --strict-out-of-sync=false --json-file-output=../snyk-frontend.json
       - name: Upload Snyk Frontend JSON
-        if: always()
+        if: always() && steps.check_secret.outputs.enabled == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: snyk-frontend-report
@@ -261,18 +283,29 @@ jobs:
     name: Snyk Backend Scan
     runs-on: ubuntu-latest
     needs: [backend-sbom]
-    if: ${{ secrets.SNYK_TOKEN != '' }}
     continue-on-error: true
     env:
       SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
     steps:
+      - name: Check if SNYK_TOKEN is configured
+        id: check_secret
+        run: |
+          if [ -n "$SNYK_TOKEN" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "SNYK_TOKEN not set; skipping Snyk backend scan."
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          fi
       - uses: actions/checkout@v4
+        if: steps.check_secret.outputs.enabled == 'true'
       - name: Download Backend Requirements
+        if: steps.check_secret.outputs.enabled == 'true'
         uses: actions/download-artifact@v4
         with:
           name: backend-sbom
           path: backend
       - name: Run Snyk CLI via Container
+        if: steps.check_secret.outputs.enabled == 'true'
         uses: docker://snyk/snyk:python-3.13
         with:
           entrypoint: /bin/sh
@@ -280,7 +313,7 @@ jobs:
             -c "cd backend && snyk test --file=requirements.txt --package-manager=pip
             --json-file-output=../snyk-backend.json -- --allow-missing"
       - name: Upload Snyk Backend JSON
-        if: always()
+        if: always() && steps.check_secret.outputs.enabled == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: snyk-backend-report
