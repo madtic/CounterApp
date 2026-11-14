@@ -1,4 +1,4 @@
-name: CounterApp CI/CD Github
+name: CounterApp CI/CD GitHub
 
 on:
   push:
@@ -19,15 +19,13 @@ on:
           - deploy
           - undeploy
 
-# Prevent duplicate runs when pushing to a branch that already has an open PR
+# Cancel superseded runs for the same branch or pull request.
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 permissions:
   contents: read
-  packages: write
-  security-events: write
 
 env:
   REGISTRY: ghcr.io
@@ -40,35 +38,47 @@ jobs:
   lint-scripts:
     name: Lint Shell Scripts
     runs-on: ubuntu-latest
+    if: github.event_name != 'workflow_dispatch' || (inputs.action == 'deploy' && github.ref_name == github.event.repository.default_branch)
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - name: Run ShellCheck
         run: shellcheck deploy/*.sh sonarqube.sh
 
   codeql-sast:
     name: SAST (CodeQL)
     runs-on: ubuntu-latest
+    if: github.event_name != 'workflow_dispatch' || (inputs.action == 'deploy' && github.ref_name == github.event.repository.default_branch)
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      security-events: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v4
         with:
           languages: python, javascript-typescript
-          paths-ignore: |
-            **/test/**
-            **/tests/**
-            **/.venv/**
-            **/node_modules/**
+          config-file: ./.github/codeql/codeql-config.yml
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v4
+        with:
+          upload: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false }}
 
   secret-detection:
     name: Secret Detection (Gitleaks)
     runs-on: ubuntu-latest
+    if: github.event_name != 'workflow_dispatch' || (inputs.action == 'deploy' && github.ref_name == github.event.repository.default_branch)
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          persist-credentials: false
       - name: Run Gitleaks
         uses: gitleaks/gitleaks-action@v2
         env:
@@ -78,21 +88,28 @@ jobs:
     name: Dependency Review (PR)
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - name: Dependency Review
         uses: actions/dependency-review-action@v4
 
   backend-test:
     name: Backend Test & Coverage
     runs-on: ubuntu-latest
+    if: github.event_name != 'workflow_dispatch' || (inputs.action == 'deploy' && github.ref_name == github.event.repository.default_branch)
+    timeout-minutes: 30
     defaults:
       run:
         working-directory: backend
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - name: Set up uv & Python 3.13
-        uses: astral-sh/setup-uv@v9
+        uses: astral-sh/setup-uv@v6
         with:
           python-version: "3.13"
           enable-cache: true
@@ -105,7 +122,13 @@ jobs:
           uv run ty check
       - name: Run Pytest with Coverage & JUnit
         run: |
-          uv run pytest --cov=app             --cov-report=xml:coverage.xml             --cov-report=html:htmlcov             --cov-report=term             --junitxml=pytest-report.xml             --junit-prefix=backend
+          uv run pytest \
+            --cov=app \
+            --cov-report=xml:coverage.xml \
+            --cov-report=html:htmlcov \
+            --cov-report=term \
+            --junitxml=pytest-report.xml \
+            --junit-prefix=backend
       - name: Upload Backend Test & Coverage Artifacts
         if: always()
         uses: actions/upload-artifact@v4
@@ -120,11 +143,15 @@ jobs:
   frontend-test:
     name: Frontend Test & Build
     runs-on: ubuntu-latest
+    if: github.event_name != 'workflow_dispatch' || (inputs.action == 'deploy' && github.ref_name == github.event.repository.default_branch)
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: frontend
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - name: Set up Node 22
         uses: actions/setup-node@v4
         with:
@@ -148,8 +175,12 @@ jobs:
   frontend-sbom:
     name: Frontend SBOM (CycloneDX)
     runs-on: ubuntu-latest
+    if: github.event_name != 'workflow_dispatch' || (inputs.action == 'deploy' && github.ref_name == github.event.repository.default_branch)
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - name: Set up Node 22
         uses: actions/setup-node@v4
         with:
@@ -170,10 +201,14 @@ jobs:
   backend-sbom:
     name: Backend SBOM & Requirements
     runs-on: ubuntu-latest
+    if: github.event_name != 'workflow_dispatch' || (inputs.action == 'deploy' && github.ref_name == github.event.repository.default_branch)
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - name: Set up uv & Python 3.13
-        uses: astral-sh/setup-uv@v9
+        uses: astral-sh/setup-uv@v6
         with:
           python-version: "3.13"
           enable-cache: true
@@ -196,6 +231,10 @@ jobs:
   sonarqube:
     name: SonarQube Analysis
     runs-on: self-hosted
+    if: github.event_name != 'pull_request' && (github.event_name != 'workflow_dispatch' || (inputs.action == 'deploy' && github.ref_name == github.event.repository.default_branch))
+    timeout-minutes: 30
+    permissions:
+      contents: read
     needs: [backend-test]
     env:
       SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
@@ -215,6 +254,7 @@ jobs:
         if: steps.check_secret.outputs.enabled == 'true'
         with:
           fetch-depth: 0
+          persist-credentials: false
       - name: Download Backend Coverage
         if: steps.check_secret.outputs.enabled == 'true'
         uses: actions/download-artifact@v4
@@ -234,7 +274,9 @@ jobs:
             exit 1
           fi
           if [ -n "${SONAR_ORGANIZATION:-}" ]; then
-            uv run --project backend pysonar               -Dsonar.host.url="${SONAR_HOST_URL}"               -Dsonar.organization="${SONAR_ORGANIZATION}"
+            uv run --project backend pysonar \
+              -Dsonar.host.url="${SONAR_HOST_URL}" \
+              -Dsonar.organization="${SONAR_ORGANIZATION}"
           else
             uv run --project backend pysonar -Dsonar.host.url="${SONAR_HOST_URL}"
           fi
@@ -242,6 +284,8 @@ jobs:
   snyk-frontend:
     name: Snyk Frontend Scan
     runs-on: ubuntu-latest
+    if: github.event_name != 'workflow_dispatch' || (inputs.action == 'deploy' && github.ref_name == github.event.repository.default_branch)
+    timeout-minutes: 20
     needs: [frontend-test]
     continue-on-error: true
     env:
@@ -258,6 +302,8 @@ jobs:
           fi
       - uses: actions/checkout@v4
         if: steps.check_secret.outputs.enabled == 'true'
+        with:
+          persist-credentials: false
       - name: Set up Node 22
         if: steps.check_secret.outputs.enabled == 'true'
         uses: actions/setup-node@v4
@@ -282,6 +328,8 @@ jobs:
   snyk-backend:
     name: Snyk Backend Scan
     runs-on: ubuntu-latest
+    if: github.event_name != 'workflow_dispatch' || (inputs.action == 'deploy' && github.ref_name == github.event.repository.default_branch)
+    timeout-minutes: 20
     needs: [backend-sbom]
     continue-on-error: true
     env:
@@ -298,6 +346,8 @@ jobs:
           fi
       - uses: actions/checkout@v4
         if: steps.check_secret.outputs.enabled == 'true'
+        with:
+          persist-credentials: false
       - name: Download Backend Requirements
         if: steps.check_secret.outputs.enabled == 'true'
         uses: actions/download-artifact@v4
@@ -326,6 +376,12 @@ jobs:
   docker-build-and-scan:
     name: Build & Scan (${{ matrix.service }})
     runs-on: ubuntu-latest
+    if: github.event_name != 'workflow_dispatch' || (inputs.action == 'deploy' && github.ref_name == github.event.repository.default_branch)
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+      security-events: write
     needs: [backend-test, frontend-test]
     strategy:
       fail-fast: false
@@ -333,17 +389,11 @@ jobs:
         service: [backend, frontend]
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
-
-      - name: Log in to GitHub Container Registry (GHCR)
-        if: github.event_name != 'pull_request'
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Extract Docker Metadata
         id: meta
@@ -351,38 +401,33 @@ jobs:
         with:
           images: ${{ env.IMAGE_PREFIX }}/${{ matrix.service }}
           tags: |
-            type=sha,prefix=,format=short
+            type=sha,prefix=,format=long
             type=ref,event=branch
             type=ref,event=tag
             type=raw,value=latest,enable={{is_default_branch}}
 
-      - name: Build Docker Image (Local Load for Scanning)
+      - name: Set image reference for scanning
+        id: image
+        env:
+          IMAGE_TAGS: ${{ steps.meta.outputs.tags }}
+        run: echo "ref=$(printf '%s\n' "$IMAGE_TAGS" | head -n 1)" >> "$GITHUB_OUTPUT"
+
+      - name: Build Docker Image
         uses: docker/build-push-action@v6
         with:
           context: ./${{ matrix.service }}
           file: ./${{ matrix.service }}/Dockerfile
           load: true
-          push: false
-          tags: ${{ env.IMAGE_PREFIX }}/${{ matrix.service }}:${{ github.sha }}
-          cache-from: type=gha,scope=${{ matrix.service }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.service }}
-
-      - name: Push Docker Image to GHCR
-        if: github.event_name != 'pull_request'
-        uses: docker/build-push-action@v6
-        with:
-          context: ./${{ matrix.service }}
-          file: ./${{ matrix.service }}/Dockerfile
-          push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service }}
 
       - name: Generate Container SBOM (CycloneDX via Trivy)
         uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: image
-          image-ref: ${{ env.IMAGE_PREFIX }}/${{ matrix.service }}:${{ github.sha }}
+          image-ref: ${{ steps.image.outputs.ref }}
           format: cyclonedx
           output: sbom-container-${{ matrix.service }}.cdx.json
 
@@ -390,12 +435,12 @@ jobs:
         uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: image
-          image-ref: ${{ env.IMAGE_PREFIX }}/${{ matrix.service }}:${{ github.sha }}
+          image-ref: ${{ steps.image.outputs.ref }}
           format: sarif
           output: cs-${{ matrix.service }}.sarif
 
       - name: Upload Container Scan SARIF to GitHub Security
-        if: always()
+        if: success() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false)
         uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: cs-${{ matrix.service }}.sarif
@@ -409,13 +454,31 @@ jobs:
           retention-days: 7
           path: sbom-container-${{ matrix.service }}.cdx.json
 
+      - name: Log in to GitHub Container Registry (GHCR)
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push Docker image tags to GHCR
+        if: github.event_name != 'pull_request'
+        env:
+          IMAGE_TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          while IFS= read -r image; do
+            [ -z "$image" ] || docker push "$image"
+          done <<< "$IMAGE_TAGS"
+
   # ===========================================================================
   # Stage: Report (Grouped SBOM & CVE HTML Reports via Trivy)
   # ===========================================================================
   trivy-sbom-cve-reports:
     name: Grouped SBOM & CVE HTML Reports
     runs-on: ubuntu-latest
-    if: always()
+    if: always() && (github.event_name != 'workflow_dispatch' || (inputs.action == 'deploy' && github.ref_name == github.event.repository.default_branch))
+    timeout-minutes: 20
     needs: [frontend-sbom, backend-sbom, docker-build-and-scan]
     steps:
       - name: Download All SBOM Artifacts
@@ -430,12 +493,19 @@ jobs:
           args: >
             -c '
               mkdir -p reports
-              for item in                 "frontend-app:downloaded-sboms/frontend-sbom/frontend-sbom.cdx.json"                 "backend-app:downloaded-sboms/backend-sbom/sbom-backend-cdx.json"                 "backend-container:downloaded-sboms/container-sbom-backend/sbom-container-backend.cdx.json"                 "frontend-container:downloaded-sboms/container-sbom-frontend/sbom-container-frontend.cdx.json"; do
+              for item in \
+                "frontend-app:downloaded-sboms/frontend-sbom/frontend-sbom.cdx.json" \
+                "backend-app:downloaded-sboms/backend-sbom/sbom-backend-cdx.json" \
+                "backend-container:downloaded-sboms/container-sbom-backend/sbom-container-backend.cdx.json" \
+                "frontend-container:downloaded-sboms/container-sbom-frontend/sbom-container-frontend.cdx.json"; do
                 NAME="${item%%:*}"
                 FILE="${item#*:}"
                 if [ -f "$FILE" ]; then
                   echo "Generating Trivy SBOM + CVE HTML report for ${NAME} (${FILE})..."
-                  trivy sbom "$FILE"                     --format template                     --template "@/contrib/html.tpl"                     --output "reports/${NAME}-report.html"
+                  trivy sbom "$FILE" \
+                    --format template \
+                    --template "@/contrib/html.tpl" \
+                    --output "reports/${NAME}-report.html"
                 else
                   echo "Skipping ${NAME}: ${FILE} not found."
                 fi
@@ -458,8 +528,10 @@ jobs:
     runs-on: self-hosted
     needs: [docker-build-and-scan, trivy-sbom-cve-reports]
     if: >
-      github.event_name != 'pull_request' &&
-      (github.event_name != 'workflow_dispatch' || github.event.inputs.action == 'deploy')
+      github.event_name == 'workflow_dispatch' &&
+      inputs.action == 'deploy' &&
+      github.ref_name == github.event.repository.default_branch
+    timeout-minutes: 15
     concurrency:
       group: counter-app-local
       cancel-in-progress: false
@@ -469,9 +541,23 @@ jobs:
     env:
       BACKEND_PORT: "8000"
       FRONTEND_PORT: "3000"
+      CI_REGISTRY: ghcr.io
+      DEPLOY_IMAGE_TAG: ${{ github.sha }}
+    permissions:
+      contents: read
+      packages: read
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Configure GHCR image path
+        id: registry
+        run: echo "image=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
       - name: Run Deploy Script & Smoke Tests
+        env:
+          CI_REGISTRY_IMAGE: ${{ steps.registry.outputs.image }}
+          CI_REGISTRY_USER: ${{ github.actor }}
+          CI_REGISTRY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
         run: |
           bash deploy/deploy.sh
           echo "Running post-deployment smoke tests..."
@@ -494,13 +580,21 @@ jobs:
   undeploy:
     name: Undeploy Local Environment
     runs-on: self-hosted
-    if: github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'undeploy'
+    if: >
+      github.event_name == 'workflow_dispatch' &&
+      inputs.action == 'undeploy' &&
+      github.ref_name == github.event.repository.default_branch
+    timeout-minutes: 15
     concurrency:
       group: counter-app-local
       cancel-in-progress: false
     environment:
       name: local
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - name: Run Undeploy Script
         run: bash deploy/undeploy.sh

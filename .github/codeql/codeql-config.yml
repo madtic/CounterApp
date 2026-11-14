@@ -1,0 +1,6 @@
+name: CounterApp CodeQL configuration
+paths-ignore:
+  - '**/test/**'
+  - '**/tests/**'
+  - '**/.venv/**'
+  - '**/node_modules/**'
