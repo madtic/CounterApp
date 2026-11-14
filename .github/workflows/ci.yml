@@ -223,12 +223,6 @@ jobs:
         run: |
           npm ci
           npm run build
-      - name: Upload Frontend Build Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: frontend-dist
-          retention-days: 7
-          path: frontend/dist/
 
   # ===========================================================================
   # Stage: Quality (SBOM, SonarQube, Snyk)
@@ -292,6 +286,8 @@ jobs:
   sonarqube:
     name: SonarQube Analysis
     runs-on: [self-hosted, linux, x64]
+    environment:
+      name: quality
     defaults:
       run:
         shell: bash
@@ -366,6 +362,8 @@ jobs:
   snyk-frontend:
     name: Snyk Frontend Scan
     runs-on: ubuntu-latest
+    environment:
+      name: quality
     if: github.event_name != 'workflow_dispatch' || (inputs.action == 'deploy' && github.ref_name == github.event.repository.default_branch)
     timeout-minutes: 20
     needs: [frontend-test]
@@ -410,6 +408,8 @@ jobs:
   snyk-backend:
     name: Snyk Backend Scan
     runs-on: ubuntu-latest
+    environment:
+      name: quality
     if: github.event_name != 'workflow_dispatch' || (inputs.action == 'deploy' && github.ref_name == github.event.repository.default_branch)
     timeout-minutes: 20
     needs: [backend-sbom]
@@ -505,21 +505,34 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.service }}
           cache-to: type=gha,mode=max,scope=${{ matrix.service }}
 
-      - name: Generate Container SBOM (CycloneDX via Trivy)
-        uses: aquasecurity/trivy-action@v0.36.0
+      - name: Set up pinned Trivy
+        uses: aquasecurity/setup-trivy@e07451d2e059ed86c2870430ea286b3a9e0bf241
         with:
-          scan-type: image
-          image-ref: ${{ steps.image.outputs.ref }}
-          format: cyclonedx
-          output: sbom-container-${{ matrix.service }}.cdx.json
+          version: v0.76.2
+          cache: true
 
-      - name: Container Vulnerability Scan (SARIF for GitHub Security Tab)
-        uses: aquasecurity/trivy-action@v0.36.0
-        with:
-          scan-type: image
-          image-ref: ${{ steps.image.outputs.ref }}
-          format: sarif
-          output: cs-${{ matrix.service }}.sarif
+      - name: Scan container image once (Trivy JSON)
+        env:
+          IMAGE_REF: ${{ steps.image.outputs.ref }}
+        run: |
+          set -euo pipefail
+          trivy image \
+            --scanners vuln \
+            --format json \
+            --output "trivy-container-${{ matrix.service }}.json" \
+            "$IMAGE_REF"
+
+      - name: Convert Trivy JSON to SARIF and CycloneDX
+        run: |
+          set -euo pipefail
+          trivy convert \
+            --format sarif \
+            --output "cs-${{ matrix.service }}.sarif" \
+            "trivy-container-${{ matrix.service }}.json"
+          trivy convert \
+            --format cyclonedx \
+            --output "sbom-container-${{ matrix.service }}.cdx.json" \
+            "trivy-container-${{ matrix.service }}.json"
 
       - name: Upload Container Scan SARIF to GitHub Security
         if: success() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false)
@@ -534,7 +547,9 @@ jobs:
         with:
           name: container-sbom-${{ matrix.service }}
           retention-days: 7
-          path: sbom-container-${{ matrix.service }}.cdx.json
+          path: |
+            sbom-container-${{ matrix.service }}.cdx.json
+            trivy-container-${{ matrix.service }}.json
 
       - name: Log in to GitHub Container Registry (GHCR)
         if: github.event_name != 'pull_request'
@@ -569,50 +584,57 @@ jobs:
           pattern: '*-sbom*'
           path: downloaded-sboms
 
-      - name: Generate Trivy SBOM + CVE HTML Reports
+      - name: Generate CVE reports from Trivy JSON
         env:
-          TRIVY_IMAGE: aquasec/trivy:latest
+          TRIVY_IMAGE: aquasec/trivy:0.76.2
           TRIVY_CACHE: ${{ runner.temp }}/trivy-cache
         run: |
           set -euo pipefail
           mkdir -p reports "$TRIVY_CACHE"
           items=(
-            "frontend-app:downloaded-sboms/frontend-sbom/frontend-sbom.cdx.json"
-            "backend-app:downloaded-sboms/backend-sbom/sbom-backend-cdx.json"
-            "backend-container:downloaded-sboms/container-sbom-backend/sbom-container-backend.cdx.json"
-            "frontend-container:downloaded-sboms/container-sbom-frontend/sbom-container-frontend.cdx.json"
+            "frontend-app:sbom:downloaded-sboms/frontend-sbom/frontend-sbom.cdx.json"
+            "backend-app:sbom:downloaded-sboms/backend-sbom/sbom-backend-cdx.json"
+            "backend-container:json:downloaded-sboms/container-sbom-backend/trivy-container-backend.json"
+            "frontend-container:json:downloaded-sboms/container-sbom-frontend/trivy-container-frontend.json"
           )
 
           for item in "${items[@]}"; do
             name="${item%%:*}"
-            file="${item#*:}"
-            report="reports/${name}-report.html"
+            details="${item#*:}"
+            input_type="${details%%:*}"
+            file="${details#*:}"
+            json_report="reports/${name}-report.json"
+            html_report="reports/${name}-report.html"
 
             if [[ ! -f "$file" ]]; then
-              echo "::warning title=Missing SBOM::Skipping ${name}; ${file} was not downloaded."
+              echo "::warning title=Missing Trivy input::Skipping ${name}; ${file} was not downloaded."
               continue
             fi
 
             echo "::group::Generate ${name} Trivy report"
-            echo "SBOM: ${file}"
+            echo "Input: ${file} (${input_type})"
+            if [[ "$input_type" == "sbom" ]]; then
+              docker run --rm \
+                --volume "$GITHUB_WORKSPACE:/workspace" \
+                --volume "$TRIVY_CACHE:/root/.cache/trivy" \
+                --workdir /workspace \
+                "$TRIVY_IMAGE" \
+                sbom "/workspace/${file}" \
+                --format json \
+                --output "/workspace/${json_report}"
+            else
+              cp "$file" "$json_report"
+            fi
             docker run --rm \
               --volume "$GITHUB_WORKSPACE:/workspace" \
-              --volume "$TRIVY_CACHE:/root/.cache/trivy" \
               --workdir /workspace \
               "$TRIVY_IMAGE" \
-              sbom "/workspace/${file}" \
-              --format json \
-              --output "/workspace/reports/${name}-report.json"
-            docker run --rm \
-              --volume "$GITHUB_WORKSPACE:/workspace" \
-              --volume "$TRIVY_CACHE:/root/.cache/trivy" \
-              --workdir /workspace \
-              "$TRIVY_IMAGE" \
-              sbom "/workspace/${file}" \
+              convert "/workspace/${json_report}" \
               --format template \
               --template "@/contrib/html.tpl" \
-              --output "/workspace/${report}"
-            echo "Report created: ${report}"
+              --output "/workspace/${html_report}"
+            echo "JSON report: ${json_report}"
+            echo "HTML report: ${html_report}"
             echo "::endgroup::"
           done
       - name: Add CVE severity summary
