@@ -19,10 +19,10 @@ on:
           - deploy
           - undeploy
 
-# Cancel superseded runs for the same branch or pull request.
+# Keep branch deployments and their cleanup from being cancelled mid-run.
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -564,11 +564,17 @@ jobs:
     defaults:
       run:
         shell: bash
-    needs: [docker-build-and-scan, trivy-sbom-cve-reports]
+    needs: [docker-build-and-scan]
     if: >
-      github.event_name == 'workflow_dispatch' &&
-      inputs.action == 'deploy' &&
-      github.ref_name == github.event.repository.default_branch
+      needs.docker-build-and-scan.result == 'success' &&
+      (
+        (github.event_name == 'push' && github.ref_type == 'branch') ||
+        (
+          github.event_name == 'workflow_dispatch' &&
+          inputs.action == 'deploy' &&
+          github.ref_name == github.event.repository.default_branch
+        )
+      )
     timeout-minutes: 15
     concurrency:
       group: counter-app-local
@@ -635,10 +641,28 @@ jobs:
     defaults:
       run:
         shell: bash
+    needs: [docker-build-and-scan, deploy]
     if: >
-      github.event_name == 'workflow_dispatch' &&
-      inputs.action == 'undeploy' &&
-      github.ref_name == github.event.repository.default_branch
+      always() &&
+      (
+        (
+          github.event_name == 'workflow_dispatch' &&
+          inputs.action == 'undeploy' &&
+          github.ref_name == github.event.repository.default_branch
+        ) ||
+        (
+          github.event_name == 'push' &&
+          github.ref_type == 'branch' &&
+          needs.docker-build-and-scan.result == 'success' &&
+          needs.deploy.result != 'skipped'
+        ) ||
+        (
+          github.event_name == 'workflow_dispatch' &&
+          inputs.action == 'deploy' &&
+          needs.docker-build-and-scan.result == 'success' &&
+          needs.deploy.result != 'skipped'
+        )
+      )
     timeout-minutes: 15
     concurrency:
       group: counter-app-local
