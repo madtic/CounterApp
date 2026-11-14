@@ -509,30 +509,43 @@ jobs:
           path: downloaded-sboms
 
       - name: Generate Trivy SBOM + CVE HTML Reports
-        uses: docker://aquasec/trivy:latest
-        with:
-          entrypoint: /bin/sh
-          args: >
-            -c '
-              mkdir -p reports
-              for item in \
-                "frontend-app:downloaded-sboms/frontend-sbom/frontend-sbom.cdx.json" \
-                "backend-app:downloaded-sboms/backend-sbom/sbom-backend-cdx.json" \
-                "backend-container:downloaded-sboms/container-sbom-backend/sbom-container-backend.cdx.json" \
-                "frontend-container:downloaded-sboms/container-sbom-frontend/sbom-container-frontend.cdx.json"; do
-                NAME="${item%%:*}"
-                FILE="${item#*:}"
-                if [ -f "$FILE" ]; then
-                  echo "Generating Trivy SBOM + CVE HTML report for ${NAME} (${FILE})..."
-                  trivy sbom "$FILE" \
-                    --format template \
-                    --template "@/contrib/html.tpl" \
-                    --output "reports/${NAME}-report.html"
-                else
-                  echo "Skipping ${NAME}: ${FILE} not found."
-                fi
-              done
-            '
+        env:
+          TRIVY_IMAGE: aquasec/trivy:latest
+          TRIVY_CACHE: ${{ runner.temp }}/trivy-cache
+        run: |
+          set -euo pipefail
+          mkdir -p reports "$TRIVY_CACHE"
+          items=(
+            "frontend-app:downloaded-sboms/frontend-sbom/frontend-sbom.cdx.json"
+            "backend-app:downloaded-sboms/backend-sbom/sbom-backend-cdx.json"
+            "backend-container:downloaded-sboms/container-sbom-backend/sbom-container-backend.cdx.json"
+            "frontend-container:downloaded-sboms/container-sbom-frontend/sbom-container-frontend.cdx.json"
+          )
+
+          for item in "${items[@]}"; do
+            name="${item%%:*}"
+            file="${item#*:}"
+            report="reports/${name}-report.html"
+
+            if [[ ! -f "$file" ]]; then
+              echo "::warning title=Missing SBOM::Skipping ${name}; ${file} was not downloaded."
+              continue
+            fi
+
+            echo "::group::Generate ${name} Trivy report"
+            echo "SBOM: ${file}"
+            docker run --rm \
+              --volume "$GITHUB_WORKSPACE:/workspace" \
+              --volume "$TRIVY_CACHE:/root/.cache/trivy" \
+              --workdir /workspace \
+              "$TRIVY_IMAGE" \
+              sbom "/workspace/${file}" \
+              --format template \
+              --template "@/contrib/html.tpl" \
+              --output "/workspace/${report}"
+            echo "Report created: ${report}"
+            echo "::endgroup::"
+          done
 
       - name: Upload Grouped HTML Reports
         if: always()
