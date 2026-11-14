@@ -139,6 +139,67 @@ jobs:
             backend/coverage.xml
             backend/pytest-report.xml
             backend/htmlcov/
+      - name: Add backend test and coverage summary
+        if: always()
+        working-directory: backend
+        run: |
+          python - <<'PY'
+          import os
+          import xml.etree.ElementTree as ET
+          from pathlib import Path
+
+          summary = Path(os.environ["GITHUB_STEP_SUMMARY"])
+          junit_path = Path("pytest-report.xml")
+          coverage_path = Path("coverage.xml")
+
+          def markdown_cell(value: str) -> str:
+              return value.replace("|", "\\|").replace("\n", " ").strip()
+
+          with summary.open("a", encoding="utf-8") as output:
+              output.write("## Backend tests and coverage\n\n")
+              if junit_path.exists():
+                  root = ET.parse(junit_path).getroot()
+                  cases = list(root.iter("testcase"))
+                  failed = sum(
+                      1 for case in cases
+                      if case.find("failure") is not None or case.find("error") is not None
+                  )
+                  skipped = sum(1 for case in cases if case.find("skipped") is not None)
+                  passed = len(cases) - failed - skipped
+                  output.write("| Tests | Passed | Failed | Skipped |\n")
+                  output.write("| ---: | ---: | ---: | ---: |\n")
+                  output.write(f"| {len(cases)} | {passed} | {failed} | {skipped} |\n\n")
+                  failed_cases = [
+                      case for case in cases
+                      if case.find("failure") is not None or case.find("error") is not None
+                  ]
+                  if failed_cases:
+                      output.write("### Failed tests\n\n| Test | Message |\n| --- | --- |\n")
+                      for case in failed_cases[:20]:
+                          issue = case.find("failure")
+                          if issue is None:
+                              issue = case.find("error")
+                          message = (issue.attrib.get("message") or issue.text or "No details").strip()
+                          output.write(
+                              f"| {markdown_cell(case.attrib.get('classname', '') + '::' + case.attrib.get('name', 'unnamed'))} "
+                              f"| {markdown_cell(message[:300])} |\n"
+                          )
+                      output.write("\n")
+              else:
+                  output.write("Pytest did not produce a JUnit report; tests may not have started.\n\n")
+
+              if coverage_path.exists():
+                  coverage = ET.parse(coverage_path).getroot()
+                  line_rate = float(coverage.attrib.get("line-rate", 0)) * 100
+                  output.write(f"**Backend line coverage:** {line_rate:.1f}%\n\n")
+              else:
+                  output.write("Coverage report was not generated.\n\n")
+
+              output.write(
+                  "Detailed JUnit and HTML coverage reports are available in the "
+                  "`backend-test-reports` workflow artifact.\n\n"
+              )
+          PY
 
   frontend-test:
     name: Frontend Test & Build
@@ -540,12 +601,100 @@ jobs:
               --workdir /workspace \
               "$TRIVY_IMAGE" \
               sbom "/workspace/${file}" \
+              --format json \
+              --output "/workspace/reports/${name}-report.json"
+            docker run --rm \
+              --volume "$GITHUB_WORKSPACE:/workspace" \
+              --volume "$TRIVY_CACHE:/root/.cache/trivy" \
+              --workdir /workspace \
+              "$TRIVY_IMAGE" \
+              sbom "/workspace/${file}" \
               --format template \
               --template "@/contrib/html.tpl" \
               --output "/workspace/${report}"
             echo "Report created: ${report}"
             echo "::endgroup::"
           done
+      - name: Add CVE severity summary
+        if: always()
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from collections import Counter
+          from pathlib import Path
+
+          severities = ("CRITICAL", "HIGH", "MEDIUM", "LOW", "UNKNOWN")
+          report_paths = sorted(Path("reports").glob("*-report.json"))
+          summary = Path(os.environ["GITHUB_STEP_SUMMARY"])
+
+          def markdown_cell(value: object) -> str:
+              return str(value).replace("|", "\\|").replace("\n", " ").strip()
+
+          with summary.open("a", encoding="utf-8") as output:
+              output.write("## Trivy CVE findings by component\n\n")
+              if not report_paths:
+                  output.write("No Trivy JSON reports were generated.\n\n")
+              else:
+                  output.write("| Component | Critical | High | Medium | Low | Unknown | Total |\n")
+                  output.write("| --- | ---: | ---: | ---: | ---: | ---: | ---: |\n")
+                  totals = Counter()
+                  findings_by_component = []
+
+                  for path in report_paths:
+                      report = json.loads(path.read_text(encoding="utf-8"))
+                      findings = [
+                          finding
+                          for result in report.get("Results") or []
+                          for finding in result.get("Vulnerabilities") or []
+                      ]
+                      counts = Counter()
+                      for finding in findings:
+                          severity = finding.get("Severity", "UNKNOWN").upper()
+                          counts[severity if severity in severities else "UNKNOWN"] += 1
+                      totals.update(counts)
+                      component = path.name.removesuffix("-report.json")
+                      output.write(
+                          f"| {component} | "
+                          + " | ".join(str(counts[level]) for level in severities)
+                          + f" | {len(findings)} |\n"
+                      )
+                      findings_by_component.append((component, findings))
+
+                  output.write(
+                      f"| **Total findings** | "
+                      + " | ".join(str(totals[level]) for level in severities)
+                      + f" | **{sum(totals.values())}** |\n\n"
+                  )
+
+                  notable = [
+                      (component, finding)
+                      for component, findings in findings_by_component
+                      for finding in findings
+                      if finding.get("Severity", "").upper() in ("CRITICAL", "HIGH")
+                  ]
+                  if notable:
+                      output.write("### Critical and high severity findings\n\n")
+                      output.write("| Component | Severity | CVE | Package | Installed | Fixed in |\n")
+                      output.write("| --- | --- | --- | --- | --- | --- |\n")
+                      for component, finding in notable[:25]:
+                          output.write(
+                              f"| {markdown_cell(component)} "
+                              f"| {markdown_cell(finding.get('Severity', 'UNKNOWN'))} "
+                              f"| {markdown_cell(finding.get('VulnerabilityID', 'N/A'))} "
+                              f"| {markdown_cell(finding.get('PkgName', 'N/A'))} "
+                              f"| {markdown_cell(finding.get('InstalledVersion', 'N/A'))} "
+                              f"| {markdown_cell(finding.get('FixedVersion') or 'N/A')} |\n"
+                          )
+                      output.write("\n")
+                  else:
+                      output.write("No critical or high severity findings in generated reports.\n\n")
+
+              output.write(
+                  "These findings are informational; Trivy reports are downloadable in "
+                  "the `grouped-sbom-cve-html-reports` artifact.\n"
+              )
+          PY
 
       - name: Upload Grouped HTML Reports
         if: always()
