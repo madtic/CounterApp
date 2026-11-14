@@ -505,6 +505,7 @@ jobs:
       - name: Download All SBOM Artifacts
         uses: actions/download-artifact@v4
         with:
+          pattern: '*-sbom*'
           path: downloaded-sboms
 
       - name: Generate Trivy SBOM + CVE HTML Reports
